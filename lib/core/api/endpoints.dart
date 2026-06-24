@@ -37,6 +37,8 @@ class Endpoints {
   static String cancelBooking(int id) => '/bookings/my/$id/cancel/';
   static String tripBookings(int tripId) => '/bookings/trip/$tripId/';
   static const String driverBroadcastRequests = '/trips/driver/broadcast-requests/';
+  static String acceptBroadcastRequest(int id) => '/trips/driver/broadcast-requests/$id/accept/';
+  static String declineBroadcastRequest(int id) => '/trips/driver/broadcast-requests/$id/decline/';
   static String tripRideRequests(int tripId) => '/trips/driver/$tripId/requests/';
   static String closeBookingWindow(int tripId) => '/trips/driver/$tripId/close-window/';
   static String acceptRideRequest(int tripId, int requestId) => '/trips/driver/$tripId/requests/$requestId/accept/';

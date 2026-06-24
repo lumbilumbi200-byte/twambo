@@ -15,6 +15,28 @@ import '../../../shared/theme.dart';
 
 const _kitwe = LatLng(-12.8167, 28.2167);
 
+final _broadcastCountProvider = FutureProvider.autoDispose<int>((ref) async {
+  if (kUseMockData) return mockBroadcastRequests.length;
+  try {
+    final resp = await ApiClient.dio.get(Endpoints.driverBroadcastRequests);
+    final raw = resp.data is List ? resp.data as List : (resp.data['results'] as List? ?? []);
+    return raw.length;
+  } catch (_) {
+    return 0;
+  }
+});
+
+final _tripPendingCountProvider = FutureProvider.autoDispose.family<int, int>((ref, tripId) async {
+  if (kUseMockData) return mockTripRideRequests[tripId]?.length ?? 0;
+  try {
+    final resp = await ApiClient.dio.get(Endpoints.tripRideRequests(tripId));
+    final raw = resp.data is List ? resp.data as List : (resp.data['results'] as List? ?? []);
+    return raw.length;
+  } catch (_) {
+    return 0;
+  }
+});
+
 final driverTripsProvider = FutureProvider.autoDispose<List<Trip>>((ref) async {
   if (kUseMockData) {
     await Future.delayed(const Duration(milliseconds: 350));
@@ -78,6 +100,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   Widget build(BuildContext context) {
     final user = ref.watch(authProvider).user;
     final tripsAsync = ref.watch(driverTripsProvider);
+    final broadcastCount = ref.watch(_broadcastCountProvider).whenData((v) => v).value ?? 0;
     final themeMode = ref.watch(themeModeProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark ? const Color(0xFF0D0D0D) : TwamboColors.bg;
@@ -91,7 +114,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
       backgroundColor: bg,
       bottomNavigationBar: DriverNavBar(
         currentIndex: 0,
-        requestsBadge: kUseMockData ? mockBroadcastRequests.length : 0,
+        requestsBadge: broadcastCount,
       ),
       body: SafeArea(
         bottom: false,
@@ -203,9 +226,6 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                       (_, i) => _ActiveTripCard(
                         trip: active[i],
                         driverId: user?.id ?? 0,
-                        pendingRequests: kUseMockData
-                            ? (mockTripRideRequests[active[i].id]?.length ?? 0)
-                            : 0,
                       ),
                       childCount: active.length,
                     )),
@@ -416,14 +436,14 @@ class _HomeMap extends StatelessWidget {
 
 // ── Active Trip Card ──────────────────────────────────────────────────────────
 
-class _ActiveTripCard extends StatelessWidget {
+class _ActiveTripCard extends ConsumerWidget {
   final Trip trip;
   final int driverId;
-  final int pendingRequests;
-  const _ActiveTripCard({required this.trip, required this.driverId, this.pendingRequests = 0});
+  const _ActiveTripCard({required this.trip, required this.driverId});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pendingRequests = ref.watch(_tripPendingCountProvider(trip.id)).whenData((v) => v).value ?? 0;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : TwamboColors.textPrimary;

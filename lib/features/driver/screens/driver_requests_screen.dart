@@ -186,9 +186,7 @@ class _RequestCardState extends State<_RequestCard> {
           driverName: user?.fullName ?? 'Driver',
         );
       } else {
-        await ApiClient.dio.post(
-          Endpoints.acceptRideRequest(0, widget.r.id),
-        );
+        await ApiClient.dio.post(Endpoints.acceptBroadcastRequest(widget.r.id));
       }
       widget.ref.invalidate(broadcastRequestsProvider);
       if (mounted) setState(() => _handled = true);
@@ -204,7 +202,7 @@ class _RequestCardState extends State<_RequestCard> {
         await Future.delayed(const Duration(milliseconds: 300));
         declineMockBroadcastRequest(widget.r.id);
       } else {
-        await ApiClient.dio.post(Endpoints.rejectRideRequest(0, widget.r.id));
+        await ApiClient.dio.post(Endpoints.declineBroadcastRequest(widget.r.id));
       }
       widget.ref.invalidate(broadcastRequestsProvider);
       if (mounted) setState(() => _handled = true);

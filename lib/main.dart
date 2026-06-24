@@ -1,32 +1,43 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart';
+import 'core/api/api_client.dart';
+import 'core/api/endpoints.dart';
 import 'features/auth/auth_provider.dart';
+
+// Set to true once android/app/google-services.json is added from Firebase console
+const _kFirebaseEnabled = false;
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  if (_kFirebaseEnabled) await Firebase.initializeApp();
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Firebase.initializeApp() goes here once google-services.json is added.
-  // await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
+  if (_kFirebaseEnabled) {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  }
   runApp(const ProviderScope(child: AppBootstrap()));
 }
 
-// Called after a successful login/session-restore to register the device push token.
-// No-op until firebase_messaging is added to pubspec.yaml.
 Future<void> registerFcmToken() async {
+  if (!_kFirebaseEnabled) return;
   try {
-    // Uncomment once firebase_messaging is in pubspec.yaml:
-    // final messaging = FirebaseMessaging.instance;
-    // await messaging.requestPermission();
-    // final token = await messaging.getToken();
-    // if (token != null) {
-    //   await ApiClient.dio.post(Endpoints.fcmToken, data: {'token': token});
-    // }
-    // messaging.onTokenRefresh.listen((newToken) async {
-    //   try { await ApiClient.dio.post(Endpoints.fcmToken, data: {'token': newToken}); }
-    //   catch (_) {}
-    // });
+    final messaging = FirebaseMessaging.instance;
+    await messaging.requestPermission(alert: true, badge: true, sound: true);
+    final token = await messaging.getToken();
+    if (token != null) {
+      await ApiClient.dio.post(Endpoints.fcmToken, data: {'fcm_token': token});
+    }
+    messaging.onTokenRefresh.listen((newToken) async {
+      try {
+        await ApiClient.dio.post(Endpoints.fcmToken, data: {'fcm_token': newToken});
+      } catch (_) {}
+    });
   } catch (_) {
     // Never crash the app over a push token failure
   }
