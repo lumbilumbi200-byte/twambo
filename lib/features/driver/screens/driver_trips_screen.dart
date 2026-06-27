@@ -7,11 +7,25 @@ import '../../../shared/driver_nav_bar.dart';
 import '../../../shared/theme.dart';
 import 'driver_home_screen.dart' show driverTripsProvider;
 
-class DriverTripsScreen extends ConsumerWidget {
+class DriverTripsScreen extends ConsumerStatefulWidget {
   const DriverTripsScreen({super.key});
+  @override
+  ConsumerState<DriverTripsScreen> createState() => _DriverTripsScreenState();
+}
+
+class _DriverTripsScreenState extends ConsumerState<DriverTripsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Always fetch fresh data when this tab is opened
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // ignore: unused_result
+      ref.refresh(driverTripsProvider.future);
+    });
+  }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final tripsAsync = ref.watch(driverTripsProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark ? const Color(0xFF0D0D0D) : TwamboColors.bg;
@@ -47,16 +61,27 @@ class DriverTripsScreen extends ConsumerWidget {
             error: (e, _) => Center(child: Text('Error: $e')),
             data: (trips) {
               if (trips.isEmpty) {
-                return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.directions_car_outlined, size: 48, color: TwamboColors.textSecondary),
-                  const SizedBox(height: 16),
-                  Text('NO TRIPS YET', style: GoogleFonts.spaceGrotesk(
-                      fontSize: 11, fontWeight: FontWeight.w700,
-                      color: TwamboColors.textSecondary, letterSpacing: 2)),
-                  const SizedBox(height: 4),
-                  Text('Create a trip to get started',
-                      style: GoogleFonts.manrope(fontSize: 12, color: TwamboColors.textSecondary)),
-                ]));
+                return RefreshIndicator(
+                  color: TwamboColors.primary,
+                  onRefresh: () => ref.refresh(driverTripsProvider.future),
+                  child: ListView(
+                    children: [
+                      SizedBox(
+                        height: 300,
+                        child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.directions_car_outlined, size: 48, color: TwamboColors.textSecondary),
+                          const SizedBox(height: 16),
+                          Text('NO TRIPS YET', style: GoogleFonts.spaceGrotesk(
+                              fontSize: 11, fontWeight: FontWeight.w700,
+                              color: TwamboColors.textSecondary, letterSpacing: 2)),
+                          const SizedBox(height: 4),
+                          Text('Create a trip to get started',
+                              style: GoogleFonts.manrope(fontSize: 12, color: TwamboColors.textSecondary)),
+                        ])),
+                      ),
+                    ],
+                  ),
+                );
               }
               return RefreshIndicator(
                 color: TwamboColors.primary,

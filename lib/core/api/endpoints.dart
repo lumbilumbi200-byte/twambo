@@ -1,5 +1,5 @@
 class Endpoints {
-  // 10.0.2.2 = Android emulator → host localhost. Change to localhost for Windows desktop dev.
+  // adb reverse tcp:8000 tcp:8000 — tunnels PC's Django over USB to device
   static const String baseUrl = 'http://127.0.0.1:8000/api/v1';
 
   // Auth
@@ -39,10 +39,13 @@ class Endpoints {
   static const String driverBroadcastRequests = '/trips/driver/broadcast-requests/';
   static String acceptBroadcastRequest(int id) => '/trips/driver/broadcast-requests/$id/accept/';
   static String declineBroadcastRequest(int id) => '/trips/driver/broadcast-requests/$id/decline/';
+  static String joinTripRequest(int tripId) => '/trips/$tripId/join-request/';
   static String tripRideRequests(int tripId) => '/trips/driver/$tripId/requests/';
   static String closeBookingWindow(int tripId) => '/trips/driver/$tripId/close-window/';
   static String acceptRideRequest(int tripId, int requestId) => '/trips/driver/$tripId/requests/$requestId/accept/';
   static String rejectRideRequest(int tripId, int requestId) => '/trips/driver/$tripId/requests/$requestId/reject/';
+  static String markPickedUp(int bookingId) => '/bookings/$bookingId/pickup/';
+  static String tripPassengers(int tripId) => '/bookings/trip/$tripId/passengers/';
   static String markNoShow(int bookingId) => '/bookings/$bookingId/no-show/';
   static String submitRating(int bookingId) => '/bookings/$bookingId/rate/';
   static String myRatingForBooking(int bookingId) => '/bookings/$bookingId/my-rating/';
@@ -57,6 +60,8 @@ class Endpoints {
   static const String wallet = '/payments/wallet/';
   static const String walletTopup = '/payments/wallet/topup/';
   static const String walletTransactions = '/payments/wallet/transactions/';
+  static const String redeemCode = '/payments/redeem-code/';
+  static const String generateCode = '/payments/generate-code/';
   static const String commissions = '/payments/commissions/';
   static const String operationalLogs = '/payments/operational-logs/';
   static String deleteOperationalLog(int id) => '/payments/operational-logs/$id/';

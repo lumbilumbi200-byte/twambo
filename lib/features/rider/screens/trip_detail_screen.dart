@@ -72,8 +72,16 @@ class _JoinEvent {
 class TripDetailScreen extends ConsumerStatefulWidget {
   final int tripId;
   final String? pickupName;
+  final double? pickupLat;
+  final double? pickupLng;
   final String? dropoffName;
-  const TripDetailScreen({super.key, required this.tripId, this.pickupName, this.dropoffName});
+  final double? dropoffLat;
+  final double? dropoffLng;
+  const TripDetailScreen({
+    super.key, required this.tripId,
+    this.pickupName, this.pickupLat, this.pickupLng,
+    this.dropoffName, this.dropoffLat, this.dropoffLng,
+  });
 
   @override
   ConsumerState<TripDetailScreen> createState() => _TripDetailScreenState();
@@ -130,7 +138,13 @@ class _TripDetailScreenState extends ConsumerState<TripDetailScreen> {
     final ok = await showModalBottomSheet<bool>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (_) => _BookSheet(trip: trip, seatCount: _selected.length, pickupName: widget.pickupName),
+      builder: (_) => _BookSheet(
+        trip: trip, seatCount: _selected.length,
+        pickupName: widget.pickupName,
+        pickupLat: widget.pickupLat, pickupLng: widget.pickupLng,
+        dropoffName: widget.dropoffName,
+        dropoffLat: widget.dropoffLat, dropoffLng: widget.dropoffLng,
+      ),
     );
     if (ok == true && context.mounted) {
       context.go('/bookings');
@@ -142,7 +156,13 @@ class _TripDetailScreenState extends ConsumerState<TripDetailScreen> {
     final ok = await showModalBottomSheet<bool>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (_) => _BookSheet(trip: trip, seatCount: seatCount, pickupName: widget.pickupName),
+      builder: (_) => _BookSheet(
+        trip: trip, seatCount: seatCount,
+        pickupName: widget.pickupName,
+        pickupLat: widget.pickupLat, pickupLng: widget.pickupLng,
+        dropoffName: widget.dropoffName,
+        dropoffLat: widget.dropoffLat, dropoffLng: widget.dropoffLng,
+      ),
     );
     if (ok == true && context.mounted) {
       context.go('/bookings');
@@ -905,7 +925,16 @@ class _BookSheet extends ConsumerStatefulWidget {
   final Trip trip;
   final int seatCount;
   final String? pickupName;
-  const _BookSheet({required this.trip, required this.seatCount, this.pickupName});
+  final double? pickupLat;
+  final double? pickupLng;
+  final String? dropoffName;
+  final double? dropoffLat;
+  final double? dropoffLng;
+  const _BookSheet({
+    required this.trip, required this.seatCount,
+    this.pickupName, this.pickupLat, this.pickupLng,
+    this.dropoffName, this.dropoffLat, this.dropoffLng,
+  });
 
   @override
   ConsumerState<_BookSheet> createState() => _BookSheetState();
@@ -928,19 +957,45 @@ class _BookSheetState extends ConsumerState<_BookSheet> {
         if (mounted) Navigator.pop(context, true);
         return;
       }
-      await ApiClient.dio.post(Endpoints.createBooking, data: {
-        'trip_id': widget.trip.id,
-        'seats_booked': widget.seatCount,
-        'pickup_name': widget.pickupName ?? widget.trip.originName,
-        'pickup_lat': widget.trip.originLat,
-        'pickup_lng': widget.trip.originLng,
-        'dropoff_name': widget.trip.destinationName,
-        'dropoff_lat': widget.trip.destinationLat,
-        'dropoff_lng': widget.trip.destinationLng,
-      });
-      if (mounted) Navigator.pop(context, true);
+      // Use rider's chosen pickup, fallback to trip origin
+      final pName = widget.pickupName ?? widget.trip.originName;
+      final pLat = double.parse((widget.pickupLat ?? widget.trip.originLat).toStringAsFixed(6));
+      final pLng = double.parse((widget.pickupLng ?? widget.trip.originLng).toStringAsFixed(6));
+      // Use rider's chosen dropoff, fallback to trip destination
+      final dName = widget.dropoffName ?? widget.trip.destinationName;
+      final dLat = double.parse((widget.dropoffLat ?? widget.trip.destinationLat).toStringAsFixed(6));
+      final dLng = double.parse((widget.dropoffLng ?? widget.trip.destinationLng).toStringAsFixed(6));
+
+      if (widget.trip.isActive) {
+        // EN ROUTE — send a join request; driver must approve before booking is created
+        await ApiClient.dio.post(Endpoints.joinTripRequest(widget.trip.id), data: {
+          'pickup_name': pName, 'pickup_lat': pLat, 'pickup_lng': pLng,
+          'dropoff_name': dName, 'dropoff_lat': dLat, 'dropoff_lng': dLng,
+        });
+        if (mounted) {
+          Navigator.pop(context, true);
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Join request sent — waiting for driver approval'),
+            duration: Duration(seconds: 4),
+          ));
+        }
+      } else {
+        // Scheduled trip — direct booking
+        await ApiClient.dio.post(Endpoints.createBooking, data: {
+          'trip_id': widget.trip.id,
+          'seats_booked': widget.seatCount,
+          'pickup_name': pName, 'pickup_lat': pLat, 'pickup_lng': pLng,
+          'dropoff_name': dName, 'dropoff_lat': dLat, 'dropoff_lng': dLng,
+        });
+        if (mounted) Navigator.pop(context, true);
+      }
     } catch (e) {
-      setState(() { _loading = false; _error = 'Booking failed — try again'; });
+      String msg = 'Booking failed — try again';
+      try {
+        final data = (e as dynamic).response?.data;
+        if (data is Map) msg = data['detail']?.toString() ?? msg;
+      } catch (_) {}
+      setState(() { _loading = false; _error = msg; });
     }
   }
 
@@ -1007,7 +1062,7 @@ class _BookSheetState extends ConsumerState<_BookSheet> {
               child: Center(
                 child: _loading
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: TwamboColors.textPrimary))
-                    : Text('CONFIRM — PAY CASH ON BOARDING',
+                    : Text(widget.trip.isActive ? 'REQUEST TO JOIN' : 'CONFIRM — PAY CASH ON BOARDING',
                         style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w800,
                             letterSpacing: 1, color: TwamboColors.textPrimary)),
               ),

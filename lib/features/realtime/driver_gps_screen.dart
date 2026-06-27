@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../../core/storage.dart';
 import '../../shared/theme.dart';
 
 class DriverGpsScreen extends StatefulWidget {
@@ -46,7 +47,10 @@ class _DriverGpsScreenState extends State<DriverGpsScreen> {
       return;
     }
     try {
-      _ws = WebSocketChannel.connect(Uri.parse('$_wsBaseUrl${widget.driverId}/'));
+      final token = await AppStorage.getAccessToken() ?? '';
+      _ws = WebSocketChannel.connect(
+        Uri.parse('$_wsBaseUrl${widget.driverId}/?token=$token'),
+      );
       setState(() { _broadcasting = true; _status = 'Live'; });
       _startClock();
       _startSending();

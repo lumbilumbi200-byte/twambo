@@ -34,18 +34,18 @@ class RecurringTrip {
 
   factory RecurringTrip.fromJson(Map<String, dynamic> j) => RecurringTrip(
         id: j['id'] as int,
-        originName: j['origin_name'] as String,
-        destinationName: j['destination_name'] as String,
-        departureTimeStr: j['departure_time'] as String,
+        originName: j['origin_name'] as String? ?? '',
+        destinationName: j['destination_name'] as String? ?? '',
+        departureTimeStr: j['departure_time'] as String? ?? '',
         days: List<String>.from(j['days_of_week'] ?? []),
-        totalSeats: j['total_seats'] as int,
-        minimumRiders: j['minimum_riders'] ?? 1,
-        mode: j['mode'] as String,
-        isActive: j['is_active'] as bool,
+        totalSeats: (j['total_seats'] as int?) ?? 1,
+        minimumRiders: (j['minimum_riders'] as int?) ?? 1,
+        mode: j['mode'] as String? ?? 'shared',
+        isActive: j['is_active'] as bool? ?? true,
       );
 }
 
-final recurringTripsProvider = FutureProvider<List<RecurringTrip>>((ref) async {
+final recurringTripsProvider = FutureProvider.autoDispose<List<RecurringTrip>>((ref) async {
   if (kUseMockData) {
     await Future.delayed(const Duration(milliseconds: 250));
     return mockRecurringTrips
@@ -400,11 +400,11 @@ class _CreateRecurringSheetState extends State<_CreateRecurringSheet> {
       }
       await ApiClient.dio.post(Endpoints.recurringTrips, data: {
         'origin_name': _origin!.name,
-        'origin_lat': _origin!.lat,
-        'origin_lng': _origin!.lng,
+        'origin_lat': double.parse(_origin!.lat.toStringAsFixed(6)),
+        'origin_lng': double.parse(_origin!.lng.toStringAsFixed(6)),
         'destination_name': _destination!.name,
-        'destination_lat': _destination!.lat,
-        'destination_lng': _destination!.lng,
+        'destination_lat': double.parse(_destination!.lat.toStringAsFixed(6)),
+        'destination_lng': double.parse(_destination!.lng.toStringAsFixed(6)),
         'departure_time': '${_fmtTime(_time!)}:00',
         'days_of_week': _selectedDays.toList(),
         'total_seats': _seats,
@@ -414,7 +414,9 @@ class _CreateRecurringSheetState extends State<_CreateRecurringSheet> {
       widget.onCreated();
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      setState(() { _loading = false; _error = 'Failed to create template'; });
+      String msg = 'Failed to create template';
+      try { msg = (e as dynamic).response?.data?.toString() ?? msg; } catch (_) {}
+      setState(() { _loading = false; _error = msg; });
     }
   }
 

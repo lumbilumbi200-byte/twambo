@@ -96,11 +96,11 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
       } else {
         await ApiClient.dio.post(Endpoints.driverTripCreate, data: {
           'origin_name': _origin!.name,
-          'origin_lat': _origin!.lat,
-          'origin_lng': _origin!.lng,
+          'origin_lat': double.parse(_origin!.lat.toStringAsFixed(6)),
+          'origin_lng': double.parse(_origin!.lng.toStringAsFixed(6)),
           'destination_name': _destination!.name,
-          'destination_lat': _destination!.lat,
-          'destination_lng': _destination!.lng,
+          'destination_lat': double.parse(_destination!.lat.toStringAsFixed(6)),
+          'destination_lng': double.parse(_destination!.lng.toStringAsFixed(6)),
           'departure_time': _departureTime!.toUtc().toIso8601String(),
           'total_seats': _seats,
           'minimum_riders': _minRiders,
@@ -110,7 +110,13 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
       ref.invalidate(driverTripsProvider);
       if (mounted) context.go('/driver');
     } catch (e) {
-      setState(() { _loading = false; _error = 'Failed to create trip. Check your details.'; });
+      String msg = 'Failed to create trip.';
+      try {
+        final data = (e as dynamic).response?.data;
+        if (data is Map) { msg = data.values.first?.toString() ?? msg; }
+        else if (data is String) { msg = data; }
+      } catch (_) {}
+      setState(() { _loading = false; _error = msg; });
     }
   }
 

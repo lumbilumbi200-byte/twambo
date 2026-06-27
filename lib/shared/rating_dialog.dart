@@ -64,7 +64,12 @@ class _RatingDialogState extends State<_RatingDialog> {
       if (mounted) { Navigator.pop(context, true); }
     } catch (e) {
       if (mounted) {
-        setState(() { _loading = false; _error = 'Could not submit — try again'; });
+        String msg = 'Could not submit — try again';
+        try {
+          final data = (e as dynamic).response?.data;
+          if (data is Map && data['detail'] != null) msg = data['detail'].toString();
+        } catch (_) {}
+        setState(() { _loading = false; _error = msg; });
       }
     }
   }
@@ -103,16 +108,16 @@ class _RatingDialogState extends State<_RatingDialog> {
           ),
           const SizedBox(height: 20),
 
-          // Star selector
+          // Star selector — 5 × (30 + 8 pad) = 190px, fits 204px dialog width
           Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(5, (i) {
             final filled = i < _stars;
             return GestureDetector(
               onTap: () => setState(() => _stars = i + 1),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: Icon(
                   filled ? Icons.star_rounded : Icons.star_outline_rounded,
-                  size: 36,
+                  size: 30,
                   color: filled ? TwamboColors.primary : TwamboColors.line,
                 ),
               ),

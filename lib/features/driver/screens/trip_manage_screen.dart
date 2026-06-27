@@ -77,12 +77,16 @@ class _ManageBooking {
   final double pickupLat;
   final double pickupLng;
   final String dropoffName;
+  final double dropoffLat;
+  final double dropoffLng;
   final double amountDue;
   final String status;
+  final bool isPickedUp;
   const _ManageBooking({
     required this.id, required this.riderName, required this.riderPhone,
     required this.pickupName, required this.pickupLat, required this.pickupLng,
-    required this.dropoffName, required this.amountDue, required this.status,
+    required this.dropoffName, required this.dropoffLat, required this.dropoffLng,
+    required this.amountDue, required this.status, required this.isPickedUp,
   });
   factory _ManageBooking.fromJson(Map<String, dynamic> j) => _ManageBooking(
         id: j['id'],
@@ -92,8 +96,11 @@ class _ManageBooking {
         pickupLat: double.tryParse((j['pickup_lat'] ?? '0').toString()) ?? 0,
         pickupLng: double.tryParse((j['pickup_lng'] ?? '0').toString()) ?? 0,
         dropoffName: j['dropoff_name'] ?? '',
+        dropoffLat: double.tryParse((j['dropoff_lat'] ?? '0').toString()) ?? 0,
+        dropoffLng: double.tryParse((j['dropoff_lng'] ?? '0').toString()) ?? 0,
         amountDue: double.tryParse((j['amount_due'] ?? '0').toString()) ?? 0,
         status: j['status'] ?? 'confirmed',
+        isPickedUp: j['is_picked_up'] == true,
       );
 }
 
@@ -290,17 +297,50 @@ class _TripMap extends ConsumerWidget {
       orElse: () => <LatLng>[originLatLng, destLatLng],
     );
 
-    final pickupMarkers = bookings
-        .where((b) => b.pickupLat != 0 && b.pickupLng != 0 && b.status != 'cancelled')
-        .map((b) => Marker(
-              point: LatLng(b.pickupLat, b.pickupLng),
-              width: 32, height: 32,
-              child: Container(
-                decoration: const BoxDecoration(color: TwamboColors.primary, shape: BoxShape.circle),
-                child: const Icon(Icons.person, size: 18, color: TwamboColors.textPrimary),
+    final activeBookings = bookings.where((b) => b.status != 'cancelled').toList();
+
+    // Numbered pickup markers (yellow = waiting, green = picked up)
+    final pickupMarkers = activeBookings.asMap().entries
+        .where((e) => e.value.pickupLat != 0)
+        .map((e) {
+          final b = e.value;
+          final seq = e.key + 1;
+          final done = b.isPickedUp;
+          return Marker(
+            point: LatLng(b.pickupLat, b.pickupLng),
+            width: 28, height: 28,
+            child: Container(
+              decoration: BoxDecoration(
+                color: done ? TwamboColors.success : TwamboColors.primary,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
               ),
-            ))
-        .toList();
+              child: Center(child: Text('$seq',
+                style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white))),
+            ),
+          );
+        }).toList();
+
+    // Dropoff markers (red circle with letter A, B, C…) — shown for all passengers with coords
+    final dropoffMarkers = activeBookings.asMap().entries
+        .where((e) => e.value.dropoffLat != 0)
+        .map((e) {
+          final b = e.value;
+          final letter = String.fromCharCode(65 + e.key); // A, B, C…
+          return Marker(
+            point: LatLng(b.dropoffLat, b.dropoffLng),
+            width: 28, height: 28,
+            child: Container(
+              decoration: BoxDecoration(
+                color: TwamboColors.error,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: Center(child: Text(letter,
+                style: GoogleFonts.spaceGrotesk(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white))),
+            ),
+          );
+        }).toList();
 
     return Stack(
       children: [
@@ -332,8 +372,10 @@ class _TripMap extends ConsumerWidget {
                 point: destLatLng, width: 36, height: 36,
                 child: const Icon(Icons.flag_rounded, color: TwamboColors.error, size: 28),
               ),
-              // Rider pickups
+              // Rider pickups (numbered)
               ...pickupMarkers,
+              // Rider dropoffs (lettered)
+              ...dropoffMarkers,
             ]),
           ],
         ),
@@ -579,35 +621,49 @@ class _PassengerSection extends ConsumerWidget {
               ),
             );
           }
-          return Column(children: bookings.map((b) => _BookingCard(b: b, isDark: isDark)).toList());
+          return Column(children: bookings.map((b) => _BookingCard(b: b, isDark: isDark, tripId: tripId)).toList());
         },
       ),
     ]);
   }
 }
 
-class _BookingCard extends StatelessWidget {
+class _BookingCard extends ConsumerStatefulWidget {
   final _ManageBooking b;
   final bool isDark;
-  const _BookingCard({required this.b, required this.isDark});
+  final int tripId;
+  const _BookingCard({required this.b, required this.isDark, required this.tripId});
+  @override
+  ConsumerState<_BookingCard> createState() => _BookingCardState();
+}
+
+class _BookingCardState extends ConsumerState<_BookingCard> {
+  bool _pickingUp = false;
+
+  Future<void> _markPickedUp() async {
+    setState(() => _pickingUp = true);
+    try {
+      await ApiClient.dio.post(Endpoints.markPickedUp(widget.b.id));
+      ref.invalidate(_bookingsProvider(widget.tripId));
+    } catch (_) {}
+    if (mounted) setState(() => _pickingUp = false);
+  }
 
   void _showContact(BuildContext context) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (_) => _ContactSheet(
-        name: b.riderName,
-        phone: b.riderPhone,
-        role: 'Rider',
-      ),
+      builder: (_) => _ContactSheet(name: widget.b.riderName, phone: widget.b.riderPhone, role: 'Rider'),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
-    final statusColor = b.status == 'confirmed' ? TwamboColors.success
+    final b = widget.b;
+    final cardBg = widget.isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = widget.isDark ? Colors.white : TwamboColors.textPrimary;
+    final statusColor = b.isPickedUp ? TwamboColors.success
+        : b.status == 'confirmed' ? TwamboColors.primary
         : b.status == 'cancelled' ? TwamboColors.error : TwamboColors.secondary;
     final initial = b.riderName.isNotEmpty ? b.riderName[0].toUpperCase() : '?';
 
@@ -620,40 +676,73 @@ class _BookingCard extends StatelessWidget {
           border: Border(left: BorderSide(color: statusColor, width: 3)),
         ),
         padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-        child: Row(children: [
-          Container(
-            width: 36, height: 36,
-            color: TwamboColors.primary.withValues(alpha: 0.15),
-            child: Center(child: Text(initial, style: GoogleFonts.spaceGrotesk(
-                fontSize: 14, fontWeight: FontWeight.w800, color: TwamboColors.primary))),
-          ),
-          const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(b.riderName, style: GoogleFonts.spaceGrotesk(
-                fontSize: 12, fontWeight: FontWeight.w700, color: textColor)),
-            const SizedBox(height: 3),
-            Row(children: [
-              const Icon(Icons.location_on_outlined, size: 10, color: TwamboColors.textSecondary),
-              const SizedBox(width: 3),
-              Expanded(child: Text(b.pickupName,
-                  style: GoogleFonts.manrope(fontSize: 10, color: TwamboColors.textSecondary),
-                  maxLines: 1, overflow: TextOverflow.ellipsis)),
-            ]),
-          ])),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text('K${b.amountDue.toStringAsFixed(0)}',
-                style: GoogleFonts.spaceGrotesk(fontSize: 14, fontWeight: FontWeight.w800, color: TwamboColors.primary)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
             Container(
-              margin: const EdgeInsets.only(top: 3),
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-              color: statusColor.withValues(alpha: 0.1),
-              child: Text(b.status.toUpperCase(),
-                  style: GoogleFonts.spaceGrotesk(fontSize: 7, fontWeight: FontWeight.w800,
-                      color: statusColor, letterSpacing: 1)),
+              width: 34, height: 34,
+              color: statusColor.withValues(alpha: 0.15),
+              child: Center(child: Text(initial, style: GoogleFonts.spaceGrotesk(
+                  fontSize: 14, fontWeight: FontWeight.w800, color: statusColor))),
             ),
-            const SizedBox(height: 2),
-            const Icon(Icons.phone_outlined, size: 11, color: TwamboColors.primary),
+            const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(b.riderName, style: GoogleFonts.spaceGrotesk(
+                  fontSize: 12, fontWeight: FontWeight.w700, color: textColor)),
+              const SizedBox(height: 2),
+              Row(children: [
+                Icon(Icons.location_on_outlined, size: 10,
+                    color: b.isPickedUp ? TwamboColors.success : TwamboColors.textSecondary),
+                const SizedBox(width: 3),
+                Expanded(child: Text(
+                  b.isPickedUp ? '→ ${b.dropoffName}' : b.pickupName,
+                  style: GoogleFonts.manrope(fontSize: 10,
+                      color: b.isPickedUp ? TwamboColors.success : TwamboColors.textSecondary),
+                  maxLines: 1, overflow: TextOverflow.ellipsis)),
+              ]),
+            ])),
+            const SizedBox(width: 8),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text('K${b.amountDue.toStringAsFixed(0)}',
+                  style: GoogleFonts.spaceGrotesk(fontSize: 13, fontWeight: FontWeight.w800,
+                      color: TwamboColors.primary)),
+              const SizedBox(height: 2),
+              const Icon(Icons.phone_outlined, size: 11, color: TwamboColors.primary),
+            ]),
           ]),
+
+          // PICKED UP button (only for active trips with unconfirmed pickup)
+          if (b.status == 'confirmed' && !b.isPickedUp) ...[
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: _pickingUp ? null : _markPickedUp,
+              child: Container(
+                height: 32, width: double.infinity,
+                color: _pickingUp ? TwamboColors.line : TwamboColors.success,
+                child: Center(
+                  child: _pickingUp
+                      ? const SizedBox(width: 14, height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.check_circle_outline, size: 14, color: Colors.white),
+                          const SizedBox(width: 6),
+                          Text('PICKED UP', style: GoogleFonts.spaceGrotesk(
+                              fontSize: 10, fontWeight: FontWeight.w800,
+                              color: Colors.white, letterSpacing: 1)),
+                        ]),
+                ),
+              ),
+            ),
+          ] else if (b.isPickedUp) ...[
+            const SizedBox(height: 6),
+            Row(children: [
+              const Icon(Icons.check_circle, size: 12, color: TwamboColors.success),
+              const SizedBox(width: 4),
+              Text('ON BOARD · DROP OFF AT ${b.dropoffName.split(',').first.toUpperCase()}',
+                  style: GoogleFonts.spaceGrotesk(fontSize: 8, fontWeight: FontWeight.w700,
+                      color: TwamboColors.success, letterSpacing: 0.8),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ]),
+          ],
         ]),
       ),
     );
@@ -893,9 +982,16 @@ class _RequestCardState extends State<_RequestCard> {
       widget.outerRef.invalidate(_rideRequestsProvider(widget.tripId));
       widget.outerRef.invalidate(_bookingsProvider(widget.tripId));
       widget.outerRef.invalidate(driverTripDetailProvider(widget.tripId));
-      if (mounted) { setState(() => _handled = true); }
-    } catch (_) {
-      if (mounted) { setState(() => _accepting = false); }
+      if (mounted) setState(() => _handled = true);
+    } catch (e) {
+      String msg = 'Failed to accept';
+      try { msg = (e as dynamic).response?.data['detail'] ?? msg; } catch (_) {}
+      if (mounted) {
+        setState(() => _accepting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg), backgroundColor: TwamboColors.error),
+        );
+      }
     }
   }
 
@@ -909,9 +1005,16 @@ class _RequestCardState extends State<_RequestCard> {
         await ApiClient.dio.post(Endpoints.rejectRideRequest(widget.tripId, widget.r.id));
       }
       widget.outerRef.invalidate(_rideRequestsProvider(widget.tripId));
-      if (mounted) { setState(() => _handled = true); }
-    } catch (_) {
-      if (mounted) { setState(() => _rejecting = false); }
+      if (mounted) setState(() => _handled = true);
+    } catch (e) {
+      String msg = 'Failed to reject';
+      try { msg = (e as dynamic).response?.data['detail'] ?? msg; } catch (_) {}
+      if (mounted) {
+        setState(() => _rejecting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg), backgroundColor: TwamboColors.error),
+        );
+      }
     }
   }
 

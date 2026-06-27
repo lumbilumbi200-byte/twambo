@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -301,64 +299,29 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
     super.dispose();
   }
 
+
+
   String _nearestName(double lat, double lng) {
     KitwePlace? nearest;
     double minDist = double.infinity;
     for (final p in kitwePlaces) {
-      final d = _dist(lat, lng, p.lat, p.lng);
+      final dLat = lat - p.lat;
+      final dLng = lng - p.lng;
+      final d = dLat * dLat + dLng * dLng;
       if (d < minDist) { minDist = d; nearest = p; }
     }
     if (nearest == null) return 'Pinned location';
-    if (minDist < 0.5) return nearest.name;
-    if (minDist < 2.0) return '${nearest.name} area';
+    final km = minDist * 111.32;
+    if (km < 0.5) return nearest.name;
+    if (km < 2.0) return '${nearest.name} area';
     return 'Pinned location';
-  }
-
-  double _dist(double lat1, double lng1, double lat2, double lng2) {
-    const r = 6371.0;
-    final dLat = (lat2 - lat1) * math.pi / 180;
-    final dLng = (lng2 - lng1) * math.pi / 180;
-    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(lat1 * math.pi / 180) * math.cos(lat2 * math.pi / 180) *
-        math.sin(dLng / 2) * math.sin(dLng / 2);
-    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-  }
-
-  Future<String> _reverseGeocode(double lat, double lng) async {
-    try {
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 6),
-        receiveTimeout: const Duration(seconds: 6),
-      ));
-      final resp = await dio.get(
-        'https://nominatim.openstreetmap.org/reverse',
-        queryParameters: {'lat': lat, 'lon': lng, 'format': 'json', 'zoom': 18},
-        options: Options(headers: {'User-Agent': 'TwamboApp/1.0 (twambo.zm)'}),
-      );
-      final data = resp.data as Map<String, dynamic>;
-      final specificName = data['name'] as String?;
-      if (specificName != null && specificName.isNotEmpty) return specificName;
-      final addr = (data['address'] as Map?)?.cast<String, dynamic>();
-      if (addr != null) {
-        final road   = addr['road']   as String?;
-        final suburb = addr['suburb'] as String? ?? addr['quarter'] as String?;
-        if (road != null && suburb != null) return '$road, $suburb';
-        if (road != null) return road;
-        if (suburb != null) return suburb;
-      }
-      final display = data['display_name'] as String?;
-      if (display != null) return display.split(',').first.trim();
-    } catch (_) {}
-    return _nearestName(lat, lng);
   }
 
   Future<void> _confirm() async {
     setState(() => _confirming = true);
     LatLng pos;
     try { pos = _mapCtrl.camera.center; } catch (_) { pos = _center; }
-    final name = kShowMapTiles
-        ? await _reverseGeocode(pos.latitude, pos.longitude)
-        : _nearestName(pos.latitude, pos.longitude);
+    final name = _nearestName(pos.latitude, pos.longitude);
     if (mounted) {
       Navigator.pop(context, KitwePlace(name, pos.latitude, pos.longitude));
     }
@@ -391,12 +354,15 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
               ),
             ),
             const SizedBox(width: 12),
-            Text(widget.title, style: GoogleFonts.spaceGrotesk(
-                fontSize: 12, fontWeight: FontWeight.w800,
-                color: textColor, letterSpacing: 1.2)),
-            const Spacer(),
-            Text('Pan to pin location',
-                style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.textSecondary)),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text(widget.title, style: GoogleFonts.spaceGrotesk(
+                    fontSize: 12, fontWeight: FontWeight.w800,
+                    color: textColor, letterSpacing: 1.2)),
+                Text('Pan to pin location',
+                    style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.textSecondary)),
+              ]),
+            ),
           ]),
         ),
 
@@ -420,20 +386,6 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
                   )
                 else
                   const ColoredBox(color: Color(0xFFD8DADB), child: SizedBox.expand()),
-                // Landmark dots
-                MarkerLayer(
-                  markers: kitwePlaces.map((p) => Marker(
-                    point: LatLng(p.lat, p.lng),
-                    width: 8, height: 8,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: TwamboColors.primary.withValues(alpha: 0.7),
-                        border: Border.all(color: Colors.white, width: 1),
-                      ),
-                    ),
-                  )).toList(),
-                ),
               ],
             ),
 
@@ -453,7 +405,7 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
                   decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white)),
             ),
 
-            // Live location label
+            // Live coordinate label
             Positioned(
               bottom: 8, left: 0, right: 0,
               child: Center(
@@ -461,7 +413,7 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   color: Colors.black87,
                   child: Text(
-                    _nearestName(_center.latitude, _center.longitude),
+                    '${_center.latitude.toStringAsFixed(5)}, ${_center.longitude.toStringAsFixed(5)}',
                     style: GoogleFonts.manrope(fontSize: 12, color: Colors.white,
                         fontWeight: FontWeight.w600),
                   ),

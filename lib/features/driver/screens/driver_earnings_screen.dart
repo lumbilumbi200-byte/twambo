@@ -271,6 +271,24 @@ class _DriverEarningsScreenState extends ConsumerState<DriverEarningsScreen> {
   bool _weeklyDismissed = false;
   bool _monthlyDismissed = false;
 
+  Future<void> _showRedeemDialog(BuildContext context, WidgetRef ref) async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => const _RedeemDialog(),
+    );
+    if (result != null && context.mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref.invalidate(_earningsProvider);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(result),
+            backgroundColor: TwamboColors.success,
+          ));
+        }
+      });
+    }
+  }
+
   Future<void> _dismissBudget(String period) async {
     try {
       if (!kUseMockData) {
@@ -371,6 +389,19 @@ class _DriverEarningsScreenState extends ConsumerState<DriverEarningsScreen> {
                             style: GoogleFonts.manrope(
                                 fontSize: 11, color: TwamboColors.textPrimary.withValues(alpha: 0.6))),
                       ]),
+                      const SizedBox(height: 14),
+                      GestureDetector(
+                        onTap: () => _showRedeemDialog(context, ref),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          color: Colors.white.withValues(alpha: 0.15),
+                          child: Center(child: Text('REDEEM TOP-UP CODE',
+                              style: GoogleFonts.spaceGrotesk(
+                                  fontSize: 11, fontWeight: FontWeight.w800,
+                                  color: TwamboColors.textPrimary, letterSpacing: 1.5))),
+                        ),
+                      ),
                     ]),
                   ),
                 )),
@@ -1164,6 +1195,96 @@ class _TxCard extends StatelessWidget {
             style: GoogleFonts.spaceGrotesk(
                 fontSize: 14, fontWeight: FontWeight.w800, color: amountColor)),
       ]),
+    );
+  }
+}
+
+// ── Redeem dialog — proper StatefulWidget avoids StatefulBuilder lifecycle crash ─
+class _RedeemDialog extends StatefulWidget {
+  const _RedeemDialog();
+  @override
+  State<_RedeemDialog> createState() => _RedeemDialogState();
+}
+
+class _RedeemDialogState extends State<_RedeemDialog> {
+  final _ctrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final code = _ctrl.text.trim();
+    if (code.isEmpty) return;
+    setState(() { _loading = true; _error = null; });
+    try {
+      final resp = await ApiClient.dio.post(Endpoints.redeemCode, data: {'code': code});
+      final credited = resp.data['credited'];
+      final newBal = resp.data['new_balance'];
+      if (mounted) Navigator.pop(context, 'K$credited credited. New balance: K$newBal');
+    } catch (e) {
+      String msg = 'Invalid or expired code';
+      try { msg = (e as dynamic).response?.data['detail'] ?? msg; } catch (_) {}
+      if (mounted) setState(() { _loading = false; _error = msg; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return AlertDialog(
+      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+      shape: const RoundedRectangleBorder(),
+      title: Text('REDEEM CODE', style: GoogleFonts.spaceGrotesk(
+          fontSize: 13, fontWeight: FontWeight.w800, color: TwamboColors.primary, letterSpacing: 1)),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('Enter the top-up code you received from Twambo.',
+            style: GoogleFonts.manrope(fontSize: 12, color: TwamboColors.textSecondary)),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(border: Border.all(color: TwamboColors.line)),
+          child: TextField(
+            controller: _ctrl,
+            textCapitalization: TextCapitalization.characters,
+            style: GoogleFonts.spaceGrotesk(fontSize: 14, fontWeight: FontWeight.w700,
+                color: isDark ? Colors.white : TwamboColors.textPrimary, letterSpacing: 1.5),
+            decoration: InputDecoration(
+              hintText: 'TWMB-XXXX-XXXX',
+              hintStyle: GoogleFonts.spaceGrotesk(fontSize: 13, color: TwamboColors.textSecondary),
+              contentPadding: const EdgeInsets.all(12),
+              border: InputBorder.none,
+            ),
+          ),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!, style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.error)),
+        ],
+      ]),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(
+              fontSize: 10, color: TwamboColors.textSecondary, letterSpacing: 1)),
+        ),
+        GestureDetector(
+          onTap: _loading ? null : _submit,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            color: _loading ? TwamboColors.line : TwamboColors.primary,
+            child: _loading
+                ? const SizedBox(width: 14, height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : Text('REDEEM', style: GoogleFonts.spaceGrotesk(
+                    fontSize: 10, fontWeight: FontWeight.w800,
+                    color: TwamboColors.textPrimary, letterSpacing: 1)),
+          ),
+        ),
+      ],
     );
   }
 }

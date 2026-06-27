@@ -9,6 +9,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../core/api/api_client.dart';
 import '../../core/api/endpoints.dart';
+import '../../core/storage.dart';
 import '../../core/models/trip.dart';
 import '../../shared/theme.dart';
 
@@ -63,10 +64,11 @@ class _RiderTrackingScreenState extends ConsumerState<RiderTrackingScreen> {
     _connect();
   }
 
-  void _connect() {
+  Future<void> _connect() async {
     if (widget.driverId <= 0) { return; }
     try {
-      _ws = WebSocketChannel.connect(Uri.parse('$_wsBaseUrl${widget.driverId}/'));
+      final token = await AppStorage.getAccessToken() ?? '';
+      _ws = WebSocketChannel.connect(Uri.parse('$_wsBaseUrl${widget.driverId}/?token=$token'));
       _wsSub = _ws!.stream.listen(
         (msg) {
           final data = jsonDecode(msg as String) as Map<String, dynamic>;

@@ -354,11 +354,11 @@ class _RequestRideScreenState extends ConsumerState<RequestRideScreen> {
       } else {
         await ApiClient.dio.post(Endpoints.createRideRequest, data: {
           'origin_name': widget.from.name,
-          'origin_lat': widget.from.lat,
-          'origin_lng': widget.from.lng,
+          'origin_lat': double.parse(widget.from.lat.toStringAsFixed(6)),
+          'origin_lng': double.parse(widget.from.lng.toStringAsFixed(6)),
           'destination_name': widget.to.name,
-          'destination_lat': widget.to.lat,
-          'destination_lng': widget.to.lng,
+          'destination_lat': double.parse(widget.to.lat.toStringAsFixed(6)),
+          'destination_lng': double.parse(widget.to.lng.toStringAsFixed(6)),
           'mode': _mode,
           'fare_estimate': fare.toStringAsFixed(2),
         });

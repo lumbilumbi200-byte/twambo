@@ -101,11 +101,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/search',   builder: (_, __) => const TripSearchScreen()),
       GoRoute(
         path: '/trip/:id',
-        builder: (_, state) => TripDetailScreen(
-          tripId: int.parse(state.pathParameters['id']!),
-          pickupName: state.uri.queryParameters['pickup'],
-          dropoffName: state.uri.queryParameters['dropoffName'],
-        ),
+        builder: (_, state) {
+          final q = state.uri.queryParameters;
+          return TripDetailScreen(
+            tripId: int.parse(state.pathParameters['id']!),
+            pickupName: q['pickup'],
+            pickupLat: double.tryParse(q['pickupLat'] ?? ''),
+            pickupLng: double.tryParse(q['pickupLng'] ?? ''),
+            dropoffName: q['dropoffName'],
+            dropoffLat: double.tryParse(q['dropoffLat'] ?? ''),
+            dropoffLng: double.tryParse(q['dropoffLng'] ?? ''),
+          );
+        },
       ),
       GoRoute(path: '/bookings', builder: (_, __) => const MyBookingsScreen()),
       GoRoute(path: '/profile',  builder: (_, __) => const ProfileScreen()),

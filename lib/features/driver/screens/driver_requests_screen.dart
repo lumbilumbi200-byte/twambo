@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
@@ -69,16 +71,55 @@ final broadcastRequestsProvider = FutureProvider.autoDispose<List<BroadcastReque
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
-class DriverRequestsScreen extends ConsumerWidget {
+class DriverRequestsScreen extends ConsumerStatefulWidget {
   const DriverRequestsScreen({super.key});
+  @override
+  ConsumerState<DriverRequestsScreen> createState() => _DriverRequestsScreenState();
+}
+
+class _DriverRequestsScreenState extends ConsumerState<DriverRequestsScreen> {
+  Timer? _pollTimer;
+  Set<int> _knownIds = {};
+  final Set<int> _acceptedByMe = {};
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  void initState() {
+    super.initState();
+    _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      if (mounted) ref.invalidate(broadcastRequestsProvider);
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onRequestsUpdated(List<BroadcastRequest> requests) {
+    final newIds = requests.map((r) => r.id).toSet();
+    if (_knownIds.isNotEmpty) {
+      final disappeared = _knownIds.difference(newIds).difference(_acceptedByMe);
+      if (disappeared.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('A rider was just picked up by another driver'),
+          backgroundColor: Color(0xFF1565C0),
+          duration: Duration(seconds: 3),
+        ));
+      }
+    }
+    _knownIds = newIds;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark ? const Color(0xFF0D0D0D) : TwamboColors.bg;
     final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
     final requestsAsync = ref.watch(broadcastRequestsProvider);
     final badgeCount = kUseMockData ? mockBroadcastRequests.length : 0;
+
+    requestsAsync.whenData(_onRequestsUpdated);
 
     return Scaffold(
       backgroundColor: bg,
@@ -145,6 +186,7 @@ class DriverRequestsScreen extends ConsumerWidget {
                       r: requests[i],
                       isDark: isDark,
                       ref: ref,
+                      onAccepted: (id) => _acceptedByMe.add(id),
                     ),
                   ),
                 );
@@ -163,7 +205,8 @@ class _RequestCard extends StatefulWidget {
   final BroadcastRequest r;
   final bool isDark;
   final WidgetRef ref;
-  const _RequestCard({required this.r, required this.isDark, required this.ref});
+  final void Function(int id) onAccepted;
+  const _RequestCard({required this.r, required this.isDark, required this.ref, required this.onAccepted});
 
   @override
   State<_RequestCard> createState() => _RequestCardState();
@@ -171,12 +214,12 @@ class _RequestCard extends StatefulWidget {
 
 class _RequestCardState extends State<_RequestCard> {
   bool _accepting = false;
-  bool _declining = false;
   bool _handled = false;
 
   Future<void> _accept() async {
     setState(() => _accepting = true);
     try {
+      int? tripId;
       if (kUseMockData) {
         await Future.delayed(const Duration(milliseconds: 500));
         final user = widget.ref.read(authProvider).user;
@@ -186,30 +229,29 @@ class _RequestCardState extends State<_RequestCard> {
           driverName: user?.fullName ?? 'Driver',
         );
       } else {
-        await ApiClient.dio.post(Endpoints.acceptBroadcastRequest(widget.r.id));
+        final resp = await ApiClient.dio.post(Endpoints.acceptBroadcastRequest(widget.r.id));
+        tripId = resp.data['trip_id'] as int?;
       }
+      widget.onAccepted(widget.r.id);
       widget.ref.invalidate(broadcastRequestsProvider);
-      if (mounted) setState(() => _handled = true);
-    } catch (_) {
-      if (mounted) setState(() => _accepting = false);
+      if (mounted) {
+        setState(() => _handled = true);
+        if (tripId != null) {
+          context.go('/driver/trip/$tripId');
+        }
+      }
+    } catch (e) {
+      String msg = 'Failed to accept';
+      try { msg = (e as dynamic).response?.data['detail'] ?? msg; } catch (_) {}
+      if (mounted) {
+        setState(() => _accepting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg), backgroundColor: TwamboColors.error),
+        );
+      }
     }
   }
 
-  Future<void> _decline() async {
-    setState(() => _declining = true);
-    try {
-      if (kUseMockData) {
-        await Future.delayed(const Duration(milliseconds: 300));
-        declineMockBroadcastRequest(widget.r.id);
-      } else {
-        await ApiClient.dio.post(Endpoints.declineBroadcastRequest(widget.r.id));
-      }
-      widget.ref.invalidate(broadcastRequestsProvider);
-      if (mounted) setState(() => _handled = true);
-    } catch (_) {
-      if (mounted) setState(() => _declining = false);
-    }
-  }
 
   void _showMap(BuildContext context) {
     showModalBottomSheet(
@@ -315,57 +357,27 @@ class _RequestCardState extends State<_RequestCard> {
         const SizedBox(height: 12),
 
         // ── Actions ───────────────────────────────────────────────────
-        Row(children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: (_accepting || _declining) ? null : _accept,
-              child: Container(
-                height: 40,
-                color: (_accepting || _declining)
-                    ? TwamboColors.success.withValues(alpha: 0.5)
-                    : TwamboColors.success,
-                alignment: Alignment.center,
-                child: _accepting
-                    ? const SizedBox(width: 16, height: 16,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.check_rounded, size: 16, color: Colors.white),
-                        const SizedBox(width: 6),
-                        Text('ACCEPT', style: GoogleFonts.spaceGrotesk(
-                            fontSize: 11, fontWeight: FontWeight.w800,
-                            color: Colors.white, letterSpacing: 1)),
-                      ]),
-              ),
-            ),
+        GestureDetector(
+          onTap: _accepting ? null : _accept,
+          child: Container(
+            height: 44,
+            width: double.infinity,
+            color: _accepting
+                ? TwamboColors.success.withValues(alpha: 0.5)
+                : TwamboColors.success,
+            alignment: Alignment.center,
+            child: _accepting
+                ? const SizedBox(width: 16, height: 16,
+                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                : Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.check_rounded, size: 16, color: Colors.white),
+                    const SizedBox(width: 6),
+                    Text('ACCEPT RIDE', style: GoogleFonts.spaceGrotesk(
+                        fontSize: 11, fontWeight: FontWeight.w800,
+                        color: Colors.white, letterSpacing: 1)),
+                  ]),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: GestureDetector(
-              onTap: (_accepting || _declining) ? null : _decline,
-              child: Container(
-                height: 40,
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: (_accepting || _declining)
-                        ? TwamboColors.error.withValues(alpha: 0.4)
-                        : TwamboColors.error,
-                  ),
-                ),
-                alignment: Alignment.center,
-                child: _declining
-                    ? const SizedBox(width: 16, height: 16,
-                        child: CircularProgressIndicator(color: TwamboColors.error, strokeWidth: 2))
-                    : Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.close_rounded, size: 16, color: TwamboColors.error),
-                        const SizedBox(width: 6),
-                        Text('DECLINE', style: GoogleFonts.spaceGrotesk(
-                            fontSize: 11, fontWeight: FontWeight.w800,
-                            color: TwamboColors.error, letterSpacing: 1)),
-                      ]),
-              ),
-            ),
-          ),
-        ]),
+        ),
       ]),
     )); // closes Container + GestureDetector
   }

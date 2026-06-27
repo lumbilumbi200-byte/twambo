@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:geolocator/geolocator.dart';
@@ -64,7 +64,16 @@ final _activeRideApiProvider = FutureProvider.autoDispose<_ActiveRideInfo?>((ref
     final tripResp = await ApiClient.dio.get(Endpoints.tripDetail(active.tripId));
     final trip = Trip.fromJson(tripResp.data as Map<String, dynamic>);
     if (trip.isCompleted || trip.isCancelled) return null;
-    return _ActiveRideInfo(booking: active, trip: trip, passengers: []);
+    // Fetch co-passengers if trip is active (EN ROUTE)
+    List<Map<String, dynamic>> passengers = [];
+    if (trip.isActive) {
+      try {
+        final pResp = await ApiClient.dio.get(Endpoints.tripPassengers(active.tripId));
+        final pRaw = pResp.data is List ? pResp.data as List : (pResp.data['results'] as List? ?? []);
+        passengers = pRaw.cast<Map<String, dynamic>>();
+      } catch (_) {}
+    }
+    return _ActiveRideInfo(booking: active, trip: trip, passengers: passengers);
   } catch (_) {
     return null;
   }
@@ -289,18 +298,23 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
     final user = ref.watch(authProvider).user;
     final firstName = user?.fullName.split(' ').first ?? 'Rider';
     final isDark = ref.watch(themeModeProvider) == ThemeMode.dark;
-    final screenH = MediaQuery.of(context).size.height;
     final bothSelected = _fromPlace != null && _toPlace != null;
+    final activeRide = kUseMockData
+        ? _activeRide
+        : ref.watch(_activeRideApiProvider).whenData((d) => d).value;
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0D0D0D) : TwamboColors.bg,
+      resizeToAvoidBottomInset: false,
       bottomNavigationBar: const RiderNavBar(currentIndex: 0),
-      body: Column(
+      body: LayoutBuilder(builder: (context, constraints) {
+        final bodyH = constraints.maxHeight;
+        return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // ── Hero zone ─────────────────────────────────────────────────
           SizedBox(
-            height: screenH * 0.33,
+            height: bodyH * 0.20,
             child: _HeroZone(
               firstName: firstName, tripsAsync: tripsAsync,
               isDark: isDark, onSunTap: () => ref.read(themeModeProvider.notifier).toggle(),
@@ -318,6 +332,20 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
             onSwap: _swap,
             onUseMyLocation: _useCurrentLocation,
           ),
+
+          // ── Active ride card (between search and available rides) ─────
+          if (activeRide != null) ...[
+            const SizedBox(height: 10),
+            _ActiveRideCard(
+              info: activeRide,
+              isDark: isDark,
+              onCancel: () {
+                cancelMockBooking(activeRide.booking.id);
+                ref.invalidate(tripSearchProvider(_searchKey));
+              },
+              onManage: () => context.go('/bookings'),
+            ),
+          ],
 
           // ── Section header ────────────────────────────────────────────
           Padding(
@@ -372,23 +400,7 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
                   style: const TextStyle(color: TwamboColors.error))),
               data: (allTrips) {
                 final trips = _filterTrips(allTrips);
-                final activeRide = kUseMockData
-                    ? _activeRide
-                    : ref.watch(_activeRideApiProvider).whenData((d) => d).value;
                 return CustomScrollView(slivers: [
-                  // ── Active ride banner ─────────────────────────────────
-                  if (activeRide != null)
-                    SliverToBoxAdapter(
-                      child: _ActiveRideCard(
-                        info: activeRide,
-                        isDark: isDark,
-                        onCancel: () {
-                          cancelMockBooking(activeRide.booking.id);
-                          ref.invalidate(tripSearchProvider(_searchKey));
-                        },
-                        onManage: () => context.go('/bookings'),
-                      ),
-                    ),
                   if (bothSelected)
                     SliverToBoxAdapter(
                       child: Padding(
@@ -439,7 +451,8 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
             ),
           ),
         ],
-      ),
+        );
+      }),
     );
   }
 }
@@ -467,31 +480,6 @@ class _ActiveRideCard extends StatefulWidget {
 }
 
 class _ActiveRideCardState extends State<_ActiveRideCard> {
-  List<LatLng>? _pts;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchRoute();
-  }
-
-  Future<void> _fetchRoute() async {
-    try {
-      final t = widget.info.trip;
-      final dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 8)));
-      final resp = await dio.get(
-        'https://router.project-osrm.org/route/v1/driving/${t.originLng},${t.originLat};${t.destinationLng},${t.destinationLat}',
-        queryParameters: {'overview': 'full', 'geometries': 'geojson'},
-      );
-      if (resp.data['code'] == 'Ok') {
-        final coords = (resp.data['routes'][0]['geometry']['coordinates'] as List)
-            .map<LatLng>((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()))
-            .toList();
-        if (mounted) setState(() => _pts = coords);
-      }
-    } catch (_) {}
-  }
-
   Future<void> _confirmCancel(BuildContext context) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -551,58 +539,20 @@ class _ActiveRideCardState extends State<_ActiveRideCard> {
           ]),
         ),
 
-        // Map
-        SizedBox(
-          height: 140,
-          child: Stack(children: [
-            FlutterMap(
-              options: MapOptions(
-                initialCameraFit: CameraFit.coordinates(
-                  coordinates: [
-                    LatLng(trip.originLat, trip.originLng),
-                    LatLng(trip.destinationLat, trip.destinationLng),
-                  ],
-                  padding: const EdgeInsets.all(32),
-                ),
-                interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
-              ),
-              children: [
-                if (kShowMapTiles)
-                  TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.twambo.app')
-                else
-                  const ColoredBox(color: Color(0xFFD8DADB), child: SizedBox.expand()),
-                if (_pts != null)
-                  PolylineLayer(polylines: [Polyline(
-                    points: _pts!, color: TwamboColors.success,
-                    strokeWidth: 3.5, borderColor: Colors.white, borderStrokeWidth: 1.5,
-                  )]),
-                MarkerLayer(markers: [
-                  Marker(
-                    point: LatLng(trip.originLat, trip.originLng), width: 24, height: 24,
-                    child: Container(
-                      decoration: const BoxDecoration(shape: BoxShape.circle, color: TwamboColors.primary),
-                      child: const Icon(Icons.circle, size: 7, color: Colors.black),
-                    ),
-                  ),
-                  Marker(
-                    point: LatLng(trip.destinationLat, trip.destinationLng), width: 26, height: 26,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle, color: TwamboColors.error,
-                        boxShadow: [BoxShadow(color: TwamboColors.error.withValues(alpha: 0.4), blurRadius: 4)],
-                      ),
-                      child: const Icon(Icons.location_on, size: 13, color: Colors.white),
-                    ),
-                  ),
-                ]),
-              ],
-            ),
-            // Place labels
-            Positioned(top: 6, left: 8,
-              child: _SmallLabel(trip.originName.split(',').first, TwamboColors.primary)),
-            Positioned(bottom: 6, right: 8,
-              child: _SmallLabel(trip.destinationName.split(',').first, TwamboColors.error)),
+        // Compact route row
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+          child: Row(children: [
+            const Icon(Icons.circle, size: 8, color: TwamboColors.primary),
+            const SizedBox(width: 6),
+            Expanded(child: Text(trip.originName.split(',').first,
+                style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.textSecondary),
+                maxLines: 1, overflow: TextOverflow.ellipsis)),
+            const Icon(Icons.arrow_forward, size: 12, color: TwamboColors.textSecondary),
+            const SizedBox(width: 6),
+            Expanded(child: Text(trip.destinationName.split(',').first,
+                style: GoogleFonts.manrope(fontSize: 11, fontWeight: FontWeight.w700, color: textColor),
+                maxLines: 1, overflow: TextOverflow.ellipsis)),
           ]),
         ),
 
@@ -625,35 +575,7 @@ class _ActiveRideCardState extends State<_ActiveRideCard> {
                       color: seatsLeft > 0 ? TwamboColors.success : TwamboColors.error)),
             ]),
 
-            // Passengers
-            if (passengers.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text('ON THIS RIDE', style: GoogleFonts.spaceGrotesk(
-                  fontSize: 8, fontWeight: FontWeight.w800,
-                  color: TwamboColors.textSecondary, letterSpacing: 1.5)),
-              const SizedBox(height: 6),
-              Wrap(spacing: 6, runSpacing: 4, children: passengers.map((p) {
-                final name = p['rider_name'] as String? ?? 'Rider';
-                final initial = name.isNotEmpty ? name[0].toUpperCase() : 'R';
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  color: TwamboColors.success.withValues(alpha: 0.12),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Container(
-                      width: 18, height: 18,
-                      decoration: const BoxDecoration(shape: BoxShape.circle, color: TwamboColors.success),
-                      child: Center(child: Text(initial, style: GoogleFonts.spaceGrotesk(
-                          fontSize: 9, fontWeight: FontWeight.w800, color: Colors.white))),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(name.split(' ').first, style: GoogleFonts.manrope(
-                        fontSize: 11, fontWeight: FontWeight.w600, color: textColor)),
-                  ]),
-                );
-              }).toList()),
-            ],
-
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
 
             // Action buttons
             Row(children: [
@@ -686,24 +608,6 @@ class _ActiveRideCardState extends State<_ActiveRideCard> {
       ]),
     );
   }
-}
-
-class _SmallLabel extends StatelessWidget {
-  final String text;
-  final Color color;
-  const _SmallLabel(this.text, this.color);
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-    color: Colors.white.withValues(alpha: 0.9),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Container(width: 6, height: 6, decoration: BoxDecoration(shape: BoxShape.circle, color: color)),
-      const SizedBox(width: 4),
-      Text(text, style: GoogleFonts.spaceGrotesk(
-          fontSize: 9, fontWeight: FontWeight.w700, color: TwamboColors.textPrimary),
-          maxLines: 1),
-    ]),
-  );
 }
 
 // ── Hero zone ─────────────────────────────────────────────────────────────────
@@ -942,17 +846,17 @@ class _ApiSlideCard extends StatelessWidget {
             decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withValues(alpha: 0.3)))),
         Padding(
           padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(slide.label, style: GoogleFonts.spaceGrotesk(fontSize: 8, fontWeight: FontWeight.w800,
-                color: text.withValues(alpha: 0.65), letterSpacing: 1.5)),
-            const SizedBox(height: 6),
-            Container(width: 40, height: 40,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withValues(alpha: 0.3)),
-                child: Icon(icon, size: 22, color: text)),
-            const Spacer(),
-            Text(slide.tagline.replaceAll(r'\n', '\n'),
-                style: GoogleFonts.spaceGrotesk(fontSize: 12, fontWeight: FontWeight.w800,
-                    color: text, height: 1.25)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Row(children: [
+              Icon(icon, size: 14, color: accent),
+              const SizedBox(width: 4),
+              Text(slide.label, style: GoogleFonts.spaceGrotesk(fontSize: 8, fontWeight: FontWeight.w800,
+                  color: text.withValues(alpha: 0.65), letterSpacing: 1.5)),
+            ]),
+            Flexible(child: Text(slide.tagline.replaceAll(r'\n', '\n'),
+                style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w800,
+                    color: text, height: 1.2),
+                maxLines: 2, overflow: TextOverflow.ellipsis)),
           ]),
         ),
       ]),
@@ -1331,9 +1235,10 @@ class _LiveBadgeState extends State<_LiveBadge> with SingleTickerProviderStateMi
         ),
       ),
       const SizedBox(width: 5),
-      Text('EN ROUTE · JOIN NOW', style: GoogleFonts.spaceGrotesk(
+      Flexible(child: Text('EN ROUTE · JOIN NOW', style: GoogleFonts.spaceGrotesk(
           fontSize: 9, fontWeight: FontWeight.w800,
-          color: TwamboColors.success, letterSpacing: 1.0)),
+          color: TwamboColors.success, letterSpacing: 1.0),
+        overflow: TextOverflow.ellipsis)),
     ]);
   }
 }
@@ -1659,36 +1564,6 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
     return 'Pinned location';
   }
 
-  // Accurate name from OSM reverse geocoding — called only on confirm
-  Future<String> _reverseGeocode(double lat, double lng) async {
-    try {
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 6),
-        receiveTimeout: const Duration(seconds: 6),
-      ));
-      final resp = await dio.get(
-        'https://nominatim.openstreetmap.org/reverse',
-        queryParameters: {'lat': lat, 'lon': lng, 'format': 'json', 'zoom': 18},
-        options: Options(headers: {'User-Agent': 'TwamboApp/1.0 (twambo.zm)'}),
-      );
-      final data = resp.data as Map<String, dynamic>;
-      // Prefer a specific named place
-      final specificName = data['name'] as String?;
-      if (specificName != null && specificName.isNotEmpty) { return specificName; }
-      // Fall back to road + suburb
-      final addr = (data['address'] as Map?)?.cast<String, dynamic>();
-      if (addr != null) {
-        final road   = addr['road']    as String?;
-        final suburb = addr['suburb']  as String? ?? addr['quarter'] as String?;
-        if (road != null && suburb != null) { return '$road, $suburb'; }
-        if (road != null) { return road; }
-        if (suburb != null) { return suburb; }
-      }
-      final display = data['display_name'] as String?;
-      if (display != null) { return display.split(',').first.trim(); }
-    } catch (_) { /* network error — fall through */ }
-    return _nearestName(lat, lng);
-  }
 
   Future<void> _confirm() async {
     setState(() => _confirming = true);
@@ -1698,10 +1573,7 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
     } catch (_) {
       pos = _center;
     }
-    // Use Nominatim when internet is available, otherwise fall back to coords
-    final name = kShowMapTiles
-        ? await _reverseGeocode(pos.latitude, pos.longitude)
-        : 'Pinned location';
+    final name = _nearestName(pos.latitude, pos.longitude);
     if (mounted) {
       Navigator.pop(context, KitwePlace(name, pos.latitude, pos.longitude));
     }
@@ -1764,20 +1636,6 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
                   )
                 else
                   const ColoredBox(color: Color(0xFFD8DADB), child: SizedBox.expand()),
-                // Sparse landmark dots (no labels — keeps map clean)
-                MarkerLayer(
-                  markers: kitwePlaces.map((p) => Marker(
-                    point: LatLng(p.lat, p.lng),
-                    width: 8, height: 8,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: TwamboColors.primary.withValues(alpha: 0.7),
-                        border: Border.all(color: Colors.white, width: 1),
-                      ),
-                    ),
-                  )).toList(),
-                ),
               ],
             ),
 
@@ -1830,7 +1688,7 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
 // ── Boarding sheet ────────────────────────────────────────────────────────────
 
 class _BoardingData {
-  final String pickup;
+  final KitwePlace pickup;
   final KitwePlace? dropoff;
   const _BoardingData(this.pickup, [this.dropoff]);
 }
@@ -1843,7 +1701,9 @@ Future<void> _showBoardingSheet(BuildContext context, Trip trip) async {
     builder: (_) => _BoardingSheet(trip: trip),
   );
   if (data != null && context.mounted) {
-    var url = '/trip/${trip.id}?pickup=${Uri.encodeComponent(data.pickup)}';
+    var url = '/trip/${trip.id}'
+        '?pickup=${Uri.encodeComponent(data.pickup.name)}'
+        '&pickupLat=${data.pickup.lat}&pickupLng=${data.pickup.lng}';
     if (data.dropoff != null) {
       url += '&dropoffName=${Uri.encodeComponent(data.dropoff!.name)}'
              '&dropoffLat=${data.dropoff!.lat}&dropoffLng=${data.dropoff!.lng}';
@@ -2180,10 +2040,9 @@ class _BoardingSheetState extends State<_BoardingSheet> {
                   ),
                 ]),
 
-                // Drop-off — only for live/joining rides
-                if (_isJoining) ...[
-                  const SizedBox(height: 12),
-                  Text('WHERE ARE YOU GOING?',
+                // Drop-off — optional for all rides
+                const SizedBox(height: 12),
+                Text('WHERE ARE YOU GOING?',
                       style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w800,
                           color: TwamboColors.textSecondary, letterSpacing: 1.5)),
                   const SizedBox(height: 8),
@@ -2252,7 +2111,6 @@ class _BoardingSheetState extends State<_BoardingSheet> {
                       ]),
                     ),
                   ],
-                ],
 
                 const SizedBox(height: 16),
 
@@ -2260,7 +2118,7 @@ class _BoardingSheetState extends State<_BoardingSheet> {
                 if (ok)
                   GestureDetector(
                     onTap: () {
-                      final pickup = _pickup?.name ?? trip.originName;
+                      final pickup = _pickup ?? KitwePlace(trip.originName, trip.originLat, trip.originLng);
                       Navigator.pop(context, _BoardingData(pickup, _dropoff));
                     },
                     child: Container(

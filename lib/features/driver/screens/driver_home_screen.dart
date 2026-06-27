@@ -112,6 +112,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 
     return Scaffold(
       backgroundColor: bg,
+      resizeToAvoidBottomInset: false,
       bottomNavigationBar: DriverNavBar(
         currentIndex: 0,
         requestsBadge: broadcastCount,
@@ -271,7 +272,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 
                   // ── Action buttons ─────────────────────────────────────────
                   SliverToBoxAdapter(child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
                     child: Column(children: [
                       GestureDetector(
                         onTap: () => context.go('/driver/create'),
@@ -595,3 +596,4 @@ class _ActionBtn extends StatelessWidget {
     );
   }
 }
+
