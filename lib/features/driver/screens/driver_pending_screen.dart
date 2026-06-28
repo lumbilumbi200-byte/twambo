@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/endpoints.dart';
 import '../../../core/models/user.dart';
@@ -30,6 +33,21 @@ class _DriverPendingScreenState extends ConsumerState<DriverPendingScreen> {
   void dispose() {
     _pollTimer?.cancel();
     super.dispose();
+  }
+
+  void _showResubmitSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ResubmitSheet(onSuccess: () {
+        Navigator.pop(context);
+        _refresh();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Documents submitted — under review again'),
+        ));
+      }),
+    );
   }
 
   Future<void> _refresh() async {
@@ -119,11 +137,7 @@ class _DriverPendingScreenState extends ConsumerState<DriverPendingScreen> {
                 ),
                 const SizedBox(height: 20),
                 GestureDetector(
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Document re-upload coming soon'),
-                    ));
-                  },
+                  onTap: () => _showResubmitSheet(context),
                   child: Container(
                     height: 48,
                     color: TwamboColors.error,
@@ -167,6 +181,118 @@ class _DriverPendingScreenState extends ConsumerState<DriverPendingScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ResubmitSheet extends StatefulWidget {
+  final VoidCallback onSuccess;
+  const _ResubmitSheet({required this.onSuccess});
+
+  @override
+  State<_ResubmitSheet> createState() => _ResubmitSheetState();
+}
+
+class _ResubmitSheetState extends State<_ResubmitSheet> {
+  final _picker = ImagePicker();
+  File? _nationalId;
+  File? _driversLicense;
+  File? _vehicleReg;
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _pick(String field) async {
+    final xf = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    if (xf == null) return;
+    setState(() {
+      if (field == 'national_id') _nationalId = File(xf.path);
+      if (field == 'drivers_license') _driversLicense = File(xf.path);
+      if (field == 'vehicle_registration') _vehicleReg = File(xf.path);
+    });
+  }
+
+  Future<void> _submit() async {
+    if (_nationalId == null || _driversLicense == null || _vehicleReg == null) {
+      setState(() => _error = 'Please select all three documents');
+      return;
+    }
+    setState(() { _loading = true; _error = null; });
+    try {
+      final form = FormData.fromMap({
+        'national_id': await MultipartFile.fromFile(_nationalId!.path, filename: 'national_id.jpg'),
+        'drivers_license': await MultipartFile.fromFile(_driversLicense!.path, filename: 'drivers_license.jpg'),
+        'vehicle_registration': await MultipartFile.fromFile(_vehicleReg!.path, filename: 'vehicle_reg.jpg'),
+      });
+      await ApiClient.dio.patch(Endpoints.driverDocuments, data: form);
+      widget.onSuccess();
+    } catch (e) {
+      setState(() => _error = 'Upload failed. Please try again.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
+    return Container(
+      decoration: BoxDecoration(color: bg, borderRadius: const BorderRadius.vertical(top: Radius.circular(16))),
+      padding: EdgeInsets.fromLTRB(24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 24),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Resubmit Documents', style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 4),
+        Text('Select clear photos of each document', style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary)),
+        const SizedBox(height: 20),
+        _DocRow(label: 'National ID', file: _nationalId, onTap: () => _pick('national_id')),
+        const SizedBox(height: 12),
+        _DocRow(label: "Driver's Licence", file: _driversLicense, onTap: () => _pick('drivers_license')),
+        const SizedBox(height: 12),
+        _DocRow(label: 'Vehicle Registration', file: _vehicleReg, onTap: () => _pick('vehicle_registration')),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(_error!, style: GoogleFonts.manrope(fontSize: 12, color: TwamboColors.error)),
+        ],
+        const SizedBox(height: 20),
+        GestureDetector(
+          onTap: _loading ? null : _submit,
+          child: Container(
+            height: 48,
+            color: _loading ? TwamboColors.textSecondary : TwamboColors.primary,
+            alignment: Alignment.center,
+            child: _loading
+                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : Text('SUBMIT DOCUMENTS', style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 1)),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _DocRow extends StatelessWidget {
+  final String label;
+  final File? file;
+  final VoidCallback onTap;
+  const _DocRow({required this.label, required this.file, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        color: isDark ? const Color(0xFF252525) : const Color(0xFFF5F5F5),
+        child: Row(children: [
+          Icon(file != null ? Icons.check_circle_rounded : Icons.upload_file_rounded,
+              color: file != null ? TwamboColors.primary : TwamboColors.textSecondary, size: 20),
+          const SizedBox(width: 12),
+          Expanded(child: Text(file != null ? '${label} selected' : 'Tap to select $label',
+              style: GoogleFonts.manrope(fontSize: 13, color: file != null ? TwamboColors.primary : TwamboColors.textSecondary))),
+          const Icon(Icons.chevron_right, size: 18, color: TwamboColors.textSecondary),
+        ]),
       ),
     );
   }
