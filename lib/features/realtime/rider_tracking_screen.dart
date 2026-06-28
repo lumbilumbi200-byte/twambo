@@ -50,7 +50,7 @@ class _RiderTrackingScreenState extends ConsumerState<RiderTrackingScreen> {
   bool _connected = false;
   int _reconnectAttempts = 0;
 
-  static const _wsBaseUrl = 'ws://127.0.0.1:8000/ws/driver/';
+  static const _wsBaseUrl = '${Endpoints.wsBase}/ws/driver/';
   static const _defaultPos = LatLng(-12.8167, 28.2167);
 
   LatLng get _pickupPos {

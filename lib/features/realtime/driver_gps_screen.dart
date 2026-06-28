@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../../core/api/endpoints.dart';
 import '../../core/storage.dart';
 import '../../shared/theme.dart';
 
@@ -31,7 +32,7 @@ class _DriverGpsScreenState extends State<DriverGpsScreen> {
   Timer? _clock;
   int _updateCount = 0;
 
-  static const _wsBaseUrl = 'ws://127.0.0.1:8000/ws/driver/';
+  static const _wsBaseUrl = '${Endpoints.wsBase}/ws/driver/';
   static const _defaultPos = LatLng(-12.8167, 28.2167);
 
   @override

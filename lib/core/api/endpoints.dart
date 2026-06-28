@@ -1,6 +1,6 @@
 class Endpoints {
-  // adb reverse tcp:8000 tcp:8000 — tunnels PC's Django over USB to device
-  static const String baseUrl = 'http://127.0.0.1:8000/api/v1';
+  static const String baseUrl = 'https://twambo.onrender.com/api/v1';
+  static const String wsBase = 'wss://twambo.onrender.com';
 
   // Auth
   static const String register = '/auth/register/';
