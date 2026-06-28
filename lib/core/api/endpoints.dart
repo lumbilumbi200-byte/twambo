@@ -8,6 +8,7 @@ class Endpoints {
   static const String tokenRefresh = '/auth/token/refresh/';
   static const String me = '/auth/me/';
   static const String fcmToken = '/auth/fcm-token/';
+  static const String verifyPhone = '/auth/verify-phone/';
   static const String driverProfile = '/auth/driver/profile/';
   static const String driverDocuments = '/auth/driver/documents/';
   static const String driverOnline = '/auth/driver/online/';

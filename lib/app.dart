@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'features/auth/auth_provider.dart';
 import 'features/auth/screens/login_screen.dart';
 import 'features/auth/screens/register_screen.dart';
+import 'features/auth/screens/otp_screen.dart';
 import 'features/rider/screens/trip_search_screen.dart';
 import 'features/rider/screens/trip_detail_screen.dart';
 import 'features/rider/screens/my_bookings_screen.dart';
@@ -28,7 +29,7 @@ import 'shared/theme.dart';
 
 // ── Auth-aware redirect notifier ──────────────────────────────────────────────
 
-const _publicRoutes = {'/login', '/register'};
+const _publicRoutes = {'/login', '/register', '/verify-phone'};
 const _driverRoutes = {
   '/driver', '/driver/create', '/driver/wallet',
   '/driver/recurring', '/driver/riders', '/driver/earnings', '/driver/profile',
@@ -96,6 +97,13 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/login',    builder: (_, __) => const LoginScreen()),
       GoRoute(path: '/register', builder: (_, __) => const RegisterScreen()),
+      GoRoute(
+        path: '/verify-phone',
+        builder: (_, state) => OtpScreen(
+          phone: state.uri.queryParameters['phone'] ?? '',
+          role:  state.uri.queryParameters['role'] ?? 'rider',
+        ),
+      ),
 
       // Rider
       GoRoute(path: '/search',   builder: (_, __) => const TripSearchScreen()),

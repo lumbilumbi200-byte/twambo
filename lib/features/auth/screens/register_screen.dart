@@ -42,7 +42,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           );
       if (!mounted) return;
       if (err == null) {
-        context.go(_role == 'driver' ? '/driver' : '/search');
+        context.go('/verify-phone?phone=${Uri.encodeComponent(_phoneCtrl.text.trim())}&role=$_role');
       } else {
         setState(() => _error = err);
       }
