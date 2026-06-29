@@ -25,7 +25,6 @@ class _DriverPendingScreenState extends ConsumerState<DriverPendingScreen> {
   @override
   void initState() {
     super.initState();
-    // Poll /auth/me/ every 30s so the router redirect fires the moment admin approves
     _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh());
   }
 
@@ -35,35 +34,23 @@ class _DriverPendingScreenState extends ConsumerState<DriverPendingScreen> {
     super.dispose();
   }
 
-  void _showResubmitSheet(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _ResubmitSheet(onSuccess: () {
-        Navigator.pop(context);
-        _refresh();
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Documents submitted — under review again'),
-        ));
-      }),
-    );
-  }
-
   Future<void> _refresh() async {
     try {
       final resp = await ApiClient.dio.get(Endpoints.me);
       final user = User.fromJson(resp.data as Map<String, dynamic>);
       ref.read(authProvider.notifier).setUser(user);
-      // GoRouter's refreshListenable fires automatically via _RouterNotifier
     } catch (_) {}
+  }
+
+  Future<void> _logout() async {
+    await ref.read(authProvider.notifier).logout();
+    if (mounted) context.go('/login');
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark ? const Color(0xFF0D0D0D) : TwamboColors.bg;
-    final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
     final user = ref.watch(authProvider).user;
     final status = user?.driverVerificationStatus ?? 'pending';
     final isRejected = status == 'rejected';
@@ -71,163 +58,149 @@ class _DriverPendingScreenState extends ConsumerState<DriverPendingScreen> {
     return Scaffold(
       backgroundColor: bg,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 24),
-
-              // Status pill
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                color: isRejected ? TwamboColors.error.withValues(alpha: 0.12) : TwamboColors.primary.withValues(alpha: 0.15),
-                child: Text(
-                  isRejected ? 'REJECTED' : 'PENDING REVIEW',
-                  style: GoogleFonts.spaceGrotesk(
-                    fontSize: 10, fontWeight: FontWeight.w800,
-                    color: isRejected ? TwamboColors.error : TwamboColors.accent,
-                    letterSpacing: 1.6,
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              Container(
-                decoration: const BoxDecoration(
-                  border: Border(left: BorderSide(color: TwamboColors.primary, width: 4)),
-                ),
-                padding: const EdgeInsets.only(left: 16),
-                child: Text(
-                  isRejected ? 'Application\nRejected' : 'Under\nReview',
-                  style: GoogleFonts.spaceGrotesk(
-                    fontSize: 32, fontWeight: FontWeight.w800,
-                    color: textColor, height: 1.1,
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 32),
-
-              if (!isRejected) ...[
-                _InfoCard(
-                  icon: Icons.access_time_rounded,
-                  title: 'What happens next?',
-                  body: 'Our team reviews your ID, driver\'s licence, and vehicle registration. '
-                      'This usually takes 1–2 business days.',
-                  isDark: isDark,
-                ),
-                const SizedBox(height: 12),
-                _InfoCard(
-                  icon: Icons.notifications_outlined,
-                  title: 'You\'ll be notified',
-                  body: 'We\'ll send a push notification the moment your account is approved. '
-                      'This screen checks automatically every 30 seconds.',
-                  isDark: isDark,
-                ),
-              ] else ...[
-                _InfoCard(
-                  icon: Icons.cancel_outlined,
-                  title: 'Your application was not approved',
-                  body: 'Please check that your documents are clear and legible, '
-                      'then resubmit. Contact support if you think this is a mistake.',
-                  isDark: isDark,
-                  accent: TwamboColors.error,
-                ),
-                const SizedBox(height: 20),
-                GestureDetector(
-                  onTap: () => _showResubmitSheet(context),
-                  child: Container(
-                    height: 48,
-                    color: TwamboColors.error,
-                    alignment: Alignment.center,
-                    child: Text('RESUBMIT DOCUMENTS',
-                        style: GoogleFonts.spaceGrotesk(
-                            fontSize: 11, fontWeight: FontWeight.w800,
-                            color: Colors.white, letterSpacing: 1)),
-                  ),
-                ),
-              ],
-
-              const Spacer(),
-
-              // Manual refresh
-              GestureDetector(
-                onTap: _refresh,
-                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  const Icon(Icons.refresh, size: 16, color: TwamboColors.textSecondary),
-                  const SizedBox(width: 6),
-                  Text('Check status now',
-                      style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary)),
-                ]),
-              ),
-
-              const SizedBox(height: 16),
-
-              GestureDetector(
-                onTap: () async {
-                  await ref.read(authProvider.notifier).logout();
-                  if (context.mounted) context.go('/login');
-                },
-                child: Center(
-                  child: Text('Log out',
-                      style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary,
-                          decoration: TextDecoration.underline)),
-                ),
-              ),
-
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
+        child: isRejected
+            ? _RejectedView(onRefresh: _refresh, onLogout: _logout, isDark: isDark)
+            : _PendingView(onRefresh: _refresh, onLogout: _logout, isDark: isDark),
       ),
     );
   }
 }
 
-class _ResubmitSheet extends StatefulWidget {
-  final VoidCallback onSuccess;
-  const _ResubmitSheet({required this.onSuccess});
+// ── Pending view — upload docs + waiting state ────────────────────────────────
+
+class _PendingView extends StatelessWidget {
+  final VoidCallback onRefresh;
+  final VoidCallback onLogout;
+  final bool isDark;
+  const _PendingView({required this.onRefresh, required this.onLogout, required this.isDark});
 
   @override
-  State<_ResubmitSheet> createState() => _ResubmitSheetState();
+  Widget build(BuildContext context) {
+    final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            color: TwamboColors.primary.withValues(alpha: 0.15),
+            child: Text('PENDING REVIEW',
+                style: GoogleFonts.spaceGrotesk(
+                    fontSize: 10, fontWeight: FontWeight.w800,
+                    color: TwamboColors.accent, letterSpacing: 1.6)),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            decoration: const BoxDecoration(
+                border: Border(left: BorderSide(color: TwamboColors.primary, width: 4))),
+            padding: const EdgeInsets.only(left: 16),
+            child: Text('Driver\nOnboarding',
+                style: GoogleFonts.spaceGrotesk(
+                    fontSize: 28, fontWeight: FontWeight.w800,
+                    color: textColor, height: 1.1)),
+          ),
+          const SizedBox(height: 8),
+          Text('Upload all documents below. Once submitted, our team will review and approve your account.',
+              style: GoogleFonts.manrope(
+                  fontSize: 13, color: TwamboColors.textSecondary, height: 1.5)),
+          const SizedBox(height: 28),
+          _DocumentUploadCard(isDark: isDark),
+          const SizedBox(height: 28),
+          GestureDetector(
+            onTap: onRefresh,
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              const Icon(Icons.refresh, size: 16, color: TwamboColors.textSecondary),
+              const SizedBox(width: 6),
+              Text('Check approval status',
+                  style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary)),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: TextButton(
+              onPressed: onLogout,
+              child: Text('Log out',
+                  style: GoogleFonts.manrope(
+                      fontSize: 13, color: TwamboColors.textSecondary,
+                      decoration: TextDecoration.underline)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class _ResubmitSheetState extends State<_ResubmitSheet> {
+// ── Document upload card ──────────────────────────────────────────────────────
+
+class _DocumentUploadCard extends ConsumerStatefulWidget {
+  final bool isDark;
+  const _DocumentUploadCard({required this.isDark});
+
+  @override
+  ConsumerState<_DocumentUploadCard> createState() => _DocumentUploadCardState();
+}
+
+class _DocumentUploadCardState extends ConsumerState<_DocumentUploadCard> {
   final _picker = ImagePicker();
-  File? _nationalId;
-  File? _driversLicense;
-  File? _vehicleReg;
+  final Map<String, File?> _files = {
+    'national_id': null,
+    'drivers_license': null,
+    'vehicle_registration': null,
+    'plate_photo': null,
+    'fitness_certificate': null,
+    'insurance_certificate': null,
+  };
+
   bool _loading = false;
+  bool _submitted = false;
   String? _error;
 
+  static const _labels = {
+    'national_id':            'NRC (National ID)',
+    'drivers_license':        "Driver's Licence",
+    'vehicle_registration':   'Vehicle Registration',
+    'plate_photo':            'Number Plate Photo',
+    'fitness_certificate':    'Fitness Certificate',
+    'insurance_certificate':  'Insurance Certificate',
+  };
+
+  static const _icons = {
+    'national_id':            Icons.badge_outlined,
+    'drivers_license':        Icons.credit_card_outlined,
+    'vehicle_registration':   Icons.description_outlined,
+    'plate_photo':            Icons.directions_car_outlined,
+    'fitness_certificate':    Icons.verified_outlined,
+    'insurance_certificate':  Icons.shield_outlined,
+  };
+
   Future<void> _pick(String field) async {
-    final xf = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    final xf = await _picker.pickImage(
+        source: ImageSource.gallery, imageQuality: 80);
     if (xf == null) return;
-    setState(() {
-      if (field == 'national_id') _nationalId = File(xf.path);
-      if (field == 'drivers_license') _driversLicense = File(xf.path);
-      if (field == 'vehicle_registration') _vehicleReg = File(xf.path);
-    });
+    setState(() => _files[field] = File(xf.path));
   }
 
+  bool get _allSelected => _files.values.every((f) => f != null);
+
   Future<void> _submit() async {
-    if (_nationalId == null || _driversLicense == null || _vehicleReg == null) {
-      setState(() => _error = 'Please select all three documents');
+    if (!_allSelected) {
+      setState(() => _error = 'Please select all 6 documents before submitting.');
       return;
     }
     setState(() { _loading = true; _error = null; });
     try {
-      final form = FormData.fromMap({
-        'national_id': await MultipartFile.fromFile(_nationalId!.path, filename: 'national_id.jpg'),
-        'drivers_license': await MultipartFile.fromFile(_driversLicense!.path, filename: 'drivers_license.jpg'),
-        'vehicle_registration': await MultipartFile.fromFile(_vehicleReg!.path, filename: 'vehicle_reg.jpg'),
+      final formData = FormData.fromMap({
+        for (final entry in _files.entries)
+          entry.key: await MultipartFile.fromFile(
+              entry.value!.path, filename: '${entry.key}.jpg'),
       });
-      await ApiClient.dio.patch(Endpoints.driverDocuments, data: form);
-      widget.onSuccess();
-    } catch (e) {
-      setState(() => _error = 'Upload failed. Please try again.');
+      await ApiClient.dio.patch(Endpoints.driverDocuments, data: formData);
+      setState(() => _submitted = true);
+    } catch (_) {
+      setState(() => _error = 'Upload failed. Check your connection and try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -235,105 +208,214 @@ class _ResubmitSheetState extends State<_ResubmitSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
+    final cardBg = widget.isDark ? const Color(0xFF1A1A1A) : Colors.white;
+
+    if (_submitted) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        color: TwamboColors.success.withValues(alpha: 0.08),
+        child: Row(children: [
+          const Icon(Icons.check_circle_rounded, color: TwamboColors.success, size: 28),
+          const SizedBox(width: 14),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Documents Submitted',
+                style: GoogleFonts.spaceGrotesk(
+                    fontSize: 14, fontWeight: FontWeight.w800, color: TwamboColors.success)),
+            const SizedBox(height: 4),
+            Text('Our team is reviewing your application. You\'ll be notified when approved.',
+                style: GoogleFonts.manrope(fontSize: 12, color: TwamboColors.textSecondary, height: 1.4)),
+          ])),
+        ]),
+      );
+    }
+
     return Container(
-      decoration: BoxDecoration(color: bg, borderRadius: const BorderRadius.vertical(top: Radius.circular(16))),
-      padding: EdgeInsets.fromLTRB(24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 24),
-      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Resubmit Documents', style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 4),
-        Text('Select clear photos of each document', style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary)),
-        const SizedBox(height: 20),
-        _DocRow(label: 'National ID', file: _nationalId, onTap: () => _pick('national_id')),
-        const SizedBox(height: 12),
-        _DocRow(label: "Driver's Licence", file: _driversLicense, onTap: () => _pick('drivers_license')),
-        const SizedBox(height: 12),
-        _DocRow(label: 'Vehicle Registration', file: _vehicleReg, onTap: () => _pick('vehicle_registration')),
-        if (_error != null) ...[
-          const SizedBox(height: 12),
-          Text(_error!, style: GoogleFonts.manrope(fontSize: 12, color: TwamboColors.error)),
-        ],
-        const SizedBox(height: 20),
-        GestureDetector(
-          onTap: _loading ? null : _submit,
-          child: Container(
-            height: 48,
-            color: _loading ? TwamboColors.textSecondary : TwamboColors.primary,
-            alignment: Alignment.center,
-            child: _loading
-                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : Text('SUBMIT DOCUMENTS', style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 1)),
+      color: cardBg,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+            decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: Color(0xFFEEEEEE)))),
+            child: Row(children: [
+              Container(width: 4, height: 20, color: TwamboColors.primary),
+              const SizedBox(width: 10),
+              Text('Required Documents',
+                  style: GoogleFonts.spaceGrotesk(
+                      fontSize: 13, fontWeight: FontWeight.w800,
+                      color: widget.isDark ? Colors.white : TwamboColors.textPrimary)),
+              const Spacer(),
+              Text('${_files.values.where((f) => f != null).length}/6',
+                  style: GoogleFonts.spaceGrotesk(
+                      fontSize: 12, fontWeight: FontWeight.w700,
+                      color: _allSelected ? TwamboColors.success : TwamboColors.textSecondary)),
+            ]),
           ),
-        ),
-      ]),
+          ..._files.keys.map((field) => _DocTile(
+            label: _labels[field]!,
+            icon: _icons[field]!,
+            file: _files[field],
+            isDark: widget.isDark,
+            onTap: () => _pick(field),
+          )),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Text(_error!,
+                  style: GoogleFonts.manrope(fontSize: 12, color: TwamboColors.error)),
+            ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: GestureDetector(
+              onTap: _loading ? null : _submit,
+              child: Container(
+                height: 48,
+                color: _allSelected
+                    ? TwamboColors.primary
+                    : TwamboColors.primary.withValues(alpha: 0.4),
+                alignment: Alignment.center,
+                child: _loading
+                    ? const SizedBox(height: 20, width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : Text('SUBMIT DOCUMENTS',
+                        style: GoogleFonts.spaceGrotesk(
+                            fontSize: 11, fontWeight: FontWeight.w800,
+                            color: Colors.white, letterSpacing: 1.2)),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _DocRow extends StatelessWidget {
+// ── Single document tile ──────────────────────────────────────────────────────
+
+class _DocTile extends StatelessWidget {
   final String label;
+  final IconData icon;
   final File? file;
+  final bool isDark;
   final VoidCallback onTap;
-  const _DocRow({required this.label, required this.file, required this.onTap});
+  const _DocTile({
+    required this.label, required this.icon,
+    required this.file, required this.isDark, required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final selected = file != null;
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(12),
-        color: isDark ? const Color(0xFF252525) : const Color(0xFFF5F5F5),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(
+              color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF0F0F0))),
+        ),
         child: Row(children: [
-          Icon(file != null ? Icons.check_circle_rounded : Icons.upload_file_rounded,
-              color: file != null ? TwamboColors.primary : TwamboColors.textSecondary, size: 20),
-          const SizedBox(width: 12),
-          Expanded(child: Text(file != null ? '${label} selected' : 'Tap to select $label',
-              style: GoogleFonts.manrope(fontSize: 13, color: file != null ? TwamboColors.primary : TwamboColors.textSecondary))),
-          const Icon(Icons.chevron_right, size: 18, color: TwamboColors.textSecondary),
+          Container(
+            width: 40, height: 40,
+            color: selected
+                ? TwamboColors.success.withValues(alpha: 0.1)
+                : (isDark ? const Color(0xFF252525) : const Color(0xFFF5F5F5)),
+            child: Icon(
+              selected ? Icons.check_circle_rounded : icon,
+              size: 20,
+              color: selected ? TwamboColors.success : TwamboColors.textSecondary,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label,
+                  style: GoogleFonts.spaceGrotesk(
+                      fontSize: 13, fontWeight: FontWeight.w700,
+                      color: isDark ? Colors.white : TwamboColors.textPrimary)),
+              Text(selected ? 'Ready to upload' : 'Tap to select photo',
+                  style: GoogleFonts.manrope(
+                      fontSize: 11,
+                      color: selected ? TwamboColors.success : TwamboColors.textSecondary)),
+            ]),
+          ),
+          if (selected)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.file(file!, width: 44, height: 44, fit: BoxFit.cover),
+            )
+          else
+            const Icon(Icons.chevron_right, size: 18, color: TwamboColors.textSecondary),
         ]),
       ),
     );
   }
 }
 
-class _InfoCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String body;
-  final bool isDark;
-  final Color accent;
+// ── Rejected view ─────────────────────────────────────────────────────────────
 
-  const _InfoCard({
-    required this.icon,
-    required this.title,
-    required this.body,
-    required this.isDark,
-    this.accent = TwamboColors.primary,
-  });
+class _RejectedView extends StatelessWidget {
+  final VoidCallback onRefresh;
+  final VoidCallback onLogout;
+  final bool isDark;
+  const _RejectedView({required this.onRefresh, required this.onLogout, required this.isDark});
 
   @override
   Widget build(BuildContext context) {
-    final cardBg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
-    final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
-    return Container(
-      color: cardBg,
-      padding: const EdgeInsets.all(16),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Icon(icon, size: 20, color: accent),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title,
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            color: TwamboColors.error.withValues(alpha: 0.12),
+            child: Text('APPLICATION REJECTED',
                 style: GoogleFonts.spaceGrotesk(
-                    fontSize: 13, fontWeight: FontWeight.w700, color: textColor)),
-            const SizedBox(height: 4),
-            Text(body,
-                style: GoogleFonts.manrope(fontSize: 12, color: TwamboColors.textSecondary, height: 1.5)),
-          ]),
-        ),
-      ]),
+                    fontSize: 10, fontWeight: FontWeight.w800,
+                    color: TwamboColors.error, letterSpacing: 1.6)),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            decoration: const BoxDecoration(
+                border: Border(left: BorderSide(color: TwamboColors.error, width: 4))),
+            padding: const EdgeInsets.only(left: 16),
+            child: Text('Documents\nRejected',
+                style: GoogleFonts.spaceGrotesk(
+                    fontSize: 28, fontWeight: FontWeight.w800,
+                    color: isDark ? Colors.white : TwamboColors.textPrimary,
+                    height: 1.1)),
+          ),
+          const SizedBox(height: 12),
+          Text('Make sure all photos are clear and legible, then resubmit.',
+              style: GoogleFonts.manrope(
+                  fontSize: 13, color: TwamboColors.textSecondary, height: 1.5)),
+          const SizedBox(height: 28),
+          _DocumentUploadCard(isDark: isDark),
+          const SizedBox(height: 20),
+          GestureDetector(
+            onTap: onRefresh,
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              const Icon(Icons.refresh, size: 16, color: TwamboColors.textSecondary),
+              const SizedBox(width: 6),
+              Text('Check status',
+                  style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary)),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: TextButton(
+              onPressed: onLogout,
+              child: Text('Log out',
+                  style: GoogleFonts.manrope(
+                      fontSize: 13, color: TwamboColors.textSecondary,
+                      decoration: TextDecoration.underline)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
