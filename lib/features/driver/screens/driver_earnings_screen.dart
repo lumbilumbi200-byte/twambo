@@ -442,7 +442,7 @@ class _DriverEarningsScreenState extends ConsumerState<DriverEarningsScreen> {
                 // ── Operational costs ───────────────────────────────────────
                 SliverToBoxAdapter(child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _OpLogsSection(opLogsAsync: opLogsAsync, isDark: isDark, textColor: textColor, cardBg: cardBg),
+                  child: _OpLogsSection(opLogsAsync: opLogsAsync, isDark: isDark, textColor: textColor, cardBg: cardBg, ref: ref),
                 )),
 
                 const SliverToBoxAdapter(child: SizedBox(height: 12)),
@@ -528,10 +528,11 @@ class _OpLogsSection extends StatelessWidget {
   final bool isDark;
   final Color textColor;
   final Color cardBg;
+  final WidgetRef ref;
 
   const _OpLogsSection({
     required this.opLogsAsync, required this.isDark,
-    required this.textColor, required this.cardBg,
+    required this.textColor, required this.cardBg, required this.ref,
   });
 
   static const _logIcons = {
@@ -620,13 +621,17 @@ class _OpLogsSection extends StatelessWidget {
     );
   }
 
-  void _showLogSheet(BuildContext context) {
-    showModalBottomSheet(
+  Future<void> _showLogSheet(BuildContext context) async {
+    final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => const _LogExpenseSheet(),
     );
+    if (saved == true) {
+      ref.invalidate(_opLogsProvider);
+      ref.invalidate(_budgetProvider);
+    }
   }
 }
 
