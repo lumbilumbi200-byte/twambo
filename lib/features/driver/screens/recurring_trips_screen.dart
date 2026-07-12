@@ -4,7 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/endpoints.dart';
-import '../../../dev/kitwe_places.dart';
+import '../../../dev/all_places.dart';
+import '../../../dev/twambo_place.dart';
 import '../../../dev/mock_trips.dart';
 import '../../../shared/place_picker.dart';
 import '../../../shared/theme.dart';
@@ -343,12 +344,13 @@ class _CreateRecurringSheet extends StatefulWidget {
 }
 
 class _CreateRecurringSheetState extends State<_CreateRecurringSheet> {
-  KitwePlace? _origin;
-  KitwePlace? _destination;
+  TwamboPlace? _origin;
+  TwamboPlace? _destination;
   TimeOfDay? _time;
   int _seats = 4;
   int _minRiders = 1;
   String _mode = 'shared';
+  String _tripType = 'city';
 
   final _allDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
   final _dayLabels = {
@@ -410,6 +412,7 @@ class _CreateRecurringSheetState extends State<_CreateRecurringSheet> {
         'total_seats': _seats,
         'minimum_riders': _minRiders,
         'mode': _mode,
+        'trip_type': _tripType,
       });
       widget.onCreated();
       if (mounted) Navigator.pop(context);
@@ -480,6 +483,8 @@ class _CreateRecurringSheetState extends State<_CreateRecurringSheet> {
               placeholder: 'Starting point',
               icon: Icons.trip_origin,
               selected: _origin,
+              places: _tripType == 'hike' ? allTwamboPlaces() : kitweTwamboPlaces(),
+              cityLabel: _tripType == 'hike' ? 'all cities' : 'Kitwe',
               onSelected: (p) => setState(() => _origin = p),
             ),
             const SizedBox(height: 10),
@@ -488,6 +493,8 @@ class _CreateRecurringSheetState extends State<_CreateRecurringSheet> {
               placeholder: 'End point',
               icon: Icons.flag_outlined,
               selected: _destination,
+              places: _tripType == 'hike' ? allTwamboPlaces() : kitweTwamboPlaces(),
+              cityLabel: _tripType == 'hike' ? 'all cities' : 'Kitwe',
               onSelected: (p) => setState(() => _destination = p),
             ),
             const SizedBox(height: 18),
@@ -571,8 +578,30 @@ class _CreateRecurringSheetState extends State<_CreateRecurringSheet> {
             ]),
             const SizedBox(height: 18),
 
-            // Mode
-            Text('RIDE MODE', style: GoogleFonts.spaceGrotesk(
+            // Trip type
+            Text('TRIP TYPE', style: GoogleFonts.spaceGrotesk(
+                fontSize: 9, fontWeight: FontWeight.w800,
+                color: TwamboColors.primary, letterSpacing: 1.5)),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(child: _SheetModeChip(
+                label: 'City', icon: Icons.location_city_outlined,
+                active: _tripType == 'city',
+                activeColor: TwamboColors.primary,
+                onTap: () => setState(() { _tripType = 'city'; _origin = null; _destination = null; }),
+              )),
+              const SizedBox(width: 8),
+              Expanded(child: _SheetModeChip(
+                label: 'Long Distance', icon: Icons.route_outlined,
+                active: _tripType == 'hike',
+                activeColor: const Color(0xFFE65100),
+                onTap: () => setState(() { _tripType = 'hike'; _origin = null; _destination = null; }),
+              )),
+            ]),
+            const SizedBox(height: 18),
+
+            // Pricing mode
+            Text('PRICING MODE', style: GoogleFonts.spaceGrotesk(
                 fontSize: 9, fontWeight: FontWeight.w800,
                 color: TwamboColors.textSecondary, letterSpacing: 1.5)),
             const SizedBox(height: 8),
@@ -580,8 +609,6 @@ class _CreateRecurringSheetState extends State<_CreateRecurringSheet> {
               Expanded(child: _SheetModeChip(label: 'Shared', icon: Icons.people_outline, active: _mode == 'shared', onTap: () => setState(() => _mode = 'shared'))),
               const SizedBox(width: 8),
               Expanded(child: _SheetModeChip(label: 'Private', icon: Icons.person_outline, active: _mode == 'private', onTap: () => setState(() => _mode = 'private'))),
-              const SizedBox(width: 8),
-              Expanded(child: _SheetModeChip(label: 'Hike', icon: Icons.directions_walk, active: _mode == 'hike', onTap: () => setState(() => _mode = 'hike'))),
             ]),
 
             if (_error != null) ...[
@@ -665,8 +692,13 @@ class _SheetModeChip extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool active;
+  final Color activeColor;
   final VoidCallback onTap;
-  const _SheetModeChip({required this.label, required this.icon, required this.active, required this.onTap});
+  const _SheetModeChip({
+    required this.label, required this.icon,
+    required this.active, required this.onTap,
+    this.activeColor = TwamboColors.primary,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -676,14 +708,14 @@ class _SheetModeChip extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
-          color: active ? TwamboColors.primary : (isDark ? const Color(0xFF2A2A2A) : TwamboColors.surfaceAlt),
-          border: Border.all(color: active ? TwamboColors.primary : (isDark ? const Color(0xFF3E3E3E) : TwamboColors.line)),
+          color: active ? activeColor : (isDark ? const Color(0xFF2A2A2A) : TwamboColors.surfaceAlt),
+          border: Border.all(color: active ? activeColor : (isDark ? const Color(0xFF3E3E3E) : TwamboColors.line)),
         ),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 18, color: active ? TwamboColors.textPrimary : TwamboColors.textSecondary),
+          Icon(icon, size: 18, color: active ? Colors.white : TwamboColors.textSecondary),
           const SizedBox(height: 3),
           Text(label, style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w700,
-              color: active ? TwamboColors.textPrimary : TwamboColors.textSecondary,
+              color: active ? Colors.white : TwamboColors.textSecondary,
               letterSpacing: 0.5)),
         ]),
       ),

@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/endpoints.dart';
+import '../auth_provider.dart';
 import '../../../shared/theme.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
@@ -80,7 +81,10 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
       if (idToken == null) throw Exception('No ID token');
       await ApiClient.dio.post(Endpoints.verifyPhone, data: {'id_token': idToken});
       if (!mounted) return;
-      context.go(widget.role == 'driver' ? '/driver' : '/search');
+      // Persist tokens and set auth state — registration is now complete
+      await ref.read(authProvider.notifier).completeRegistration();
+      if (!mounted) return;
+      context.go(widget.role == 'driver' ? '/driver-pending' : '/search');
     } catch (e) {
       setState(() => _error = 'Verification failed. Check the code and try again.');
     } finally {

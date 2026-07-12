@@ -249,6 +249,9 @@ class _ManageBody extends StatelessWidget {
                 children: [
                   _HeaderCard(trip: trip, isDark: isDark),
                   _StatsRow(trip: trip, isDark: isDark),
+                  if (trip.isHike) _LongDistanceBanner(trip: trip, isDark: isDark),
+                  if (trip.isHike && trip.isScheduled)
+                    _HikeManifestSection(tripId: tripId, isDark: isDark),
                   if (trip.isScheduled &&
                       trip.bookingWindowOpen &&
                       trip.bookingWindowClosesAt != null &&
@@ -573,6 +576,153 @@ class _Stat extends StatelessWidget {
             fontSize: 9, color: TwamboColors.textSecondary, letterSpacing: 1)),
       ]),
     ));
+  }
+}
+
+// ── Long Distance banner ──────────────────────────────────────────────────────
+
+class _LongDistanceBanner extends StatelessWidget {
+  final Trip trip;
+  final bool isDark;
+  const _LongDistanceBanner({required this.trip, required this.isDark});
+
+  static const _hikeOrange = Color(0xFFE65100);
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isDark ? const Color(0xFF2A1800) : const Color(0xFFFFF3E0);
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: bg,
+        border: const Border(left: BorderSide(color: _hikeOrange, width: 4)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            color: _hikeOrange,
+            child: Text('LONG DISTANCE', style: GoogleFonts.spaceGrotesk(
+                fontSize: 9, fontWeight: FontWeight.w800,
+                color: Colors.white, letterSpacing: 1.5)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '${trip.originName} → ${trip.destinationName}',
+              style: GoogleFonts.spaceGrotesk(
+                  fontSize: 11, fontWeight: FontWeight.w700, color: _hikeOrange),
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        Row(children: [
+          const Icon(Icons.info_outline_rounded, size: 13, color: _hikeOrange),
+          const SizedBox(width: 5),
+          Expanded(child: Text(
+            'Riders may pay a home pickup detour fee (up to K50). '
+            'This is charged automatically based on how far their pickup is from your departure point.',
+            style: GoogleFonts.manrope(fontSize: 11, color: _hikeOrange, height: 1.4),
+          )),
+        ]),
+      ]),
+    );
+  }
+}
+
+// ── Hike passenger manifest ───────────────────────────────────────────────────
+
+class _HikeManifestSection extends ConsumerWidget {
+  final int tripId;
+  final bool isDark;
+  const _HikeManifestSection({required this.tripId, required this.isDark});
+
+  static const _hikeOrange = Color(0xFFE65100);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bookingsAsync = ref.watch(_bookingsProvider(tripId));
+    final bg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
+
+    return bookingsAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (bookings) {
+        final confirmed = bookings.where((b) => b.status == 'confirmed').toList();
+        if (confirmed.isEmpty) return const SizedBox.shrink();
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          decoration: BoxDecoration(
+            color: bg,
+            border: const Border(left: BorderSide(color: _hikeOrange, width: 4)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+              child: Row(children: [
+                const Icon(Icons.format_list_numbered_rounded, size: 14, color: _hikeOrange),
+                const SizedBox(width: 6),
+                Text('PASSENGER MANIFEST', style: GoogleFonts.spaceGrotesk(
+                    fontSize: 9, fontWeight: FontWeight.w800,
+                    color: _hikeOrange, letterSpacing: 1.5)),
+                const Spacer(),
+                Text('${confirmed.length} confirmed', style: GoogleFonts.manrope(
+                    fontSize: 10, color: TwamboColors.textSecondary)),
+              ]),
+            ),
+            const Divider(height: 1),
+            ...confirmed.asMap().entries.map((e) {
+              final i = e.key;
+              final b = e.value;
+              return Container(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                decoration: BoxDecoration(
+                  border: i < confirmed.length - 1
+                      ? Border(bottom: BorderSide(
+                          color: isDark ? const Color(0xFF2E2E2E) : TwamboColors.line))
+                      : null,
+                ),
+                child: Row(children: [
+                  Container(
+                    width: 22, height: 22,
+                    color: _hikeOrange.withValues(alpha: 0.12),
+                    alignment: Alignment.center,
+                    child: Text('${i + 1}', style: GoogleFonts.spaceGrotesk(
+                        fontSize: 10, fontWeight: FontWeight.w800, color: _hikeOrange)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(b.riderName, style: GoogleFonts.spaceGrotesk(
+                        fontSize: 12, fontWeight: FontWeight.w700,
+                        color: isDark ? Colors.white : TwamboColors.textPrimary)),
+                    if (b.pickupName.isNotEmpty)
+                      Text('Boards: ${b.pickupName}', style: GoogleFonts.manrope(
+                          fontSize: 10, color: TwamboColors.textSecondary),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ])),
+                  if (b.riderPhone.isNotEmpty)
+                    GestureDetector(
+                      onTap: () => launchUrl(Uri.parse('tel:${b.riderPhone}')),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        color: _hikeOrange.withValues(alpha: 0.10),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.phone_outlined, size: 12, color: _hikeOrange),
+                          const SizedBox(width: 4),
+                          Text(b.riderPhone, style: GoogleFonts.manrope(
+                              fontSize: 10, fontWeight: FontWeight.w600, color: _hikeOrange)),
+                        ]),
+                      ),
+                    ),
+                ]),
+              );
+            }),
+          ]),
+        );
+      },
+    );
   }
 }
 

@@ -145,6 +145,18 @@ class _TripRow extends StatelessWidget {
                     fontSize: 8, fontWeight: FontWeight.w700,
                     color: TwamboColors.textSecondary, letterSpacing: 1)),
               ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                color: trip.isHike
+                    ? const Color(0xFFE65100).withValues(alpha: 0.10)
+                    : TwamboColors.primary.withValues(alpha: 0.08),
+                child: Text(trip.isHike ? 'LONG DIST' : 'CITY',
+                    style: GoogleFonts.spaceGrotesk(
+                        fontSize: 8, fontWeight: FontWeight.w800,
+                        color: trip.isHike ? const Color(0xFFE65100) : TwamboColors.primary,
+                        letterSpacing: 1)),
+              ),
             ]),
             const SizedBox(height: 6),
             Text(trip.originName, style: GoogleFonts.manrope(

@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:dio/dio.dart';
 import 'app.dart';
 import 'core/api/api_client.dart';
 import 'core/api/endpoints.dart';
+import 'core/services/version_check_service.dart';
 import 'features/auth/auth_provider.dart';
+import 'shared/widgets/update_gate.dart';
 
 Future<void> registerFcmToken() async {
   try {
@@ -39,6 +40,7 @@ class AppBootstrap extends ConsumerStatefulWidget {
 
 class _AppBootstrapState extends ConsumerState<AppBootstrap> {
   bool _ready = false;
+  VersionResult? _versionResult;
 
   @override
   void initState() {
@@ -47,11 +49,15 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
   }
 
   Future<void> _init() async {
-    await ref.read(authProvider.notifier).loadCurrentUser();
+    final results = await Future.wait([
+      ref.read(authProvider.notifier).loadCurrentUser(),
+      VersionCheckService.check(),
+    ]);
+    _versionResult = results[1] as VersionResult?;
+
     final isLoggedIn = ref.read(authProvider).isLoggedIn;
-    if (isLoggedIn) {
-      registerFcmToken();
-    }
+    if (isLoggedIn) registerFcmToken();
+
     setState(() => _ready = true);
   }
 
@@ -62,6 +68,12 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
         home: Scaffold(body: Center(child: CircularProgressIndicator())),
       );
     }
-    return const TwamboApp();
+    // Hard block: app is too old to run
+    if (_versionResult?.isForceUpdate == true) {
+      return ForceUpdateScreen(result: _versionResult!);
+    }
+    return TwamboApp(
+      softUpdate: _versionResult?.isSoftUpdate == true ? _versionResult : null,
+    );
   }
 }

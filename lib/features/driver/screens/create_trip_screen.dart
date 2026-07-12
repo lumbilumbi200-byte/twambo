@@ -5,9 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/endpoints.dart';
-import '../../../dev/kitwe_places.dart';
+import '../../../dev/all_places.dart';
+import '../../../dev/city_regions.dart';
+import '../../../dev/copperbelt/kitwe_places.dart' show haversineKm;
+import '../../../dev/twambo_place.dart';
 import '../../../dev/mock_trips.dart' show kShowMapTiles, kUseMockData, addMockDriverTrip;
 import '../../../features/auth/auth_provider.dart';
 import '../../../shared/place_picker.dart';
@@ -32,21 +36,55 @@ final _createTripRouteProvider = FutureProvider.family<List<LatLng>, String>((re
 });
 
 class CreateTripScreen extends ConsumerStatefulWidget {
-  const CreateTripScreen({super.key});
+  final String? initialTripType;
+  const CreateTripScreen({super.key, this.initialTripType});
 
   @override
   ConsumerState<CreateTripScreen> createState() => _CreateTripScreenState();
 }
 
 class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
-  KitwePlace? _origin;
-  KitwePlace? _destination;
+  TwamboPlace? _origin;
+  TwamboPlace? _destination;
   DateTime? _departureTime;
-  String _mode = 'shared';
+  late String _tripType = widget.initialTripType == 'hike' ? 'hike' : 'city';  // city | hike
+  String _mode = 'shared';     // shared | private | dynamic
+  CityRegion? _detectedCity;
   int _seats = 4;
   int _minRiders = 1;
   bool _loading = false;
   String? _error;
+  int _bookingCutoffMinutes = 60; // hike only — how many minutes before departure to close booking
+
+  List<TwamboPlace> get _places =>
+      _tripType == 'hike' ? intercityTwamboPlaces() : placesForCity(_detectedCity?.id ?? 'kitwe');
+
+  String get _cityLabel =>
+      _tripType == 'hike' ? 'all cities' : (_detectedCity?.name ?? 'Kitwe');
+
+  @override
+  void initState() {
+    super.initState();
+    _detectDriverCity();
+  }
+
+  Future<void> _detectDriverCity() async {
+    try {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return;
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.low),
+      );
+      final city = detectCity(pos.latitude, pos.longitude) ??
+          nearestCity(pos.latitude, pos.longitude);
+      if (mounted) setState(() => _detectedCity = city);
+    } catch (_) {
+      // GPS unavailable — fall back to Kitwe
+    }
+  }
 
   Future<void> _pickTime() async {
     final now = DateTime.now();
@@ -73,11 +111,16 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
       setState(() => _error = 'Select departure time');
       return;
     }
+    if (_tripType == 'hike' && _departureTime!.difference(DateTime.now()).inMinutes < 60) {
+      setState(() => _error = 'Long distance trips require at least 1 hour notice');
+      return;
+    }
     setState(() { _loading = true; _error = null; });
     try {
       if (kUseMockData) {
         await Future.delayed(const Duration(milliseconds: 500));
         final user = ref.read(authProvider).user;
+        final rf = _tripType == 'hike' ? _routeFare() : null;
         addMockDriverTrip(
           originName: _origin!.name,
           originLat: _origin!.lat,
@@ -89,7 +132,10 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
           totalSeats: _seats,
           minimumRiders: _minRiders,
           mode: _mode,
+          tripType: _tripType,
           fare: _mode == 'private' ? 80.0 : 20.0,
+          routeFare: rf,
+          bookingCutoffMinutes: _tripType == 'hike' ? _bookingCutoffMinutes : 0,
           driverId: user?.id ?? 0,
           driverName: user?.fullName ?? 'Driver',
         );
@@ -105,9 +151,43 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
           'total_seats': _seats,
           'minimum_riders': _minRiders,
           'mode': _mode,
+          'trip_type': _tripType,
+          if (_tripType == 'hike') 'booking_cutoff_minutes': _bookingCutoffMinutes,
         });
       }
       ref.invalidate(driverTripsProvider);
+      // For hike trips, offer to create the return leg immediately
+      if (mounted && _tripType == 'hike') {
+        final savedOrigin = _origin;
+        final savedDest = _destination;
+        final doReturn = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text('Post return trip?', style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.w800)),
+            content: Text(
+              'Create the return leg: ${savedDest?.name} → ${savedOrigin?.name}?',
+              style: GoogleFonts.manrope(fontSize: 13),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Not now')),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Yes, create return', style: TextStyle(color: Color(0xFFE65100))),
+              ),
+            ],
+          ),
+        );
+        if (doReturn == true && mounted) {
+          setState(() {
+            _origin = savedDest;
+            _destination = savedOrigin;
+            _departureTime = null;
+            _loading = false;
+            _error = null;
+          });
+          return;
+        }
+      }
       if (mounted) context.go('/driver');
     } catch (e) {
       String msg = 'Failed to create trip.';
@@ -124,6 +204,18 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
     final d = '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
     final t = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     return '$d  $t';
+  }
+
+  // Mirrors the backend FareEngine tiered formula — used for mock route_fare only.
+  double _routeFare() {
+    if (_origin == null || _destination == null) return 20.0;
+    final distKm = haversineKm(_origin!.lat, _origin!.lng, _destination!.lat, _destination!.lng);
+    double fare = 0, rem = distKm;
+    final local = rem.clamp(0, 5.0);    fare += local * 5.0;  rem -= local;
+    final city  = rem.clamp(0, 10.0);   fare += city  * 2.5;  rem -= city;
+    final ic    = rem.clamp(0, 35.0);   fare += ic    * 0.8;  rem -= ic;
+    fare += rem * 0.6;
+    return fare < 15.0 ? 15.0 : fare;
   }
 
   @override
@@ -164,12 +256,75 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
           ),
           const SizedBox(height: 4),
 
-          // ── Body ─────────────────────────────────────────────────────────────
           Expanded(child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
 
-              // Route card
+              // ── Trip Type selector ─────────────────────────────────────────
+              Container(
+                decoration: BoxDecoration(
+                  color: cardBg,
+                  border: Border(left: BorderSide(
+                    color: _tripType == 'hike' ? const Color(0xFFE65100) : TwamboColors.primary,
+                    width: 4,
+                  )),
+                ),
+                padding: const EdgeInsets.all(16),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('TRIP TYPE', style: GoogleFonts.spaceGrotesk(
+                      fontSize: 9, fontWeight: FontWeight.w800,
+                      color: _tripType == 'hike' ? const Color(0xFFE65100) : TwamboColors.primary,
+                      letterSpacing: 1.5)),
+                  const SizedBox(height: 14),
+                  Row(children: [
+                    Expanded(child: _TypeToggle(
+                      label: 'City Trip',
+                      icon: Icons.location_city_outlined,
+                      subtitle: 'Local routes',
+                      active: _tripType == 'city',
+                      activeColor: TwamboColors.primary,
+                      onTap: () => setState(() {
+                        _tripType = 'city';
+                        _origin = null;
+                        _destination = null;
+                        if (_mode == 'dynamic') _mode = 'shared';
+                      }),
+                    )),
+                    const SizedBox(width: 10),
+                    Expanded(child: _TypeToggle(
+                      label: 'Long Distance',
+                      icon: Icons.route_outlined,
+                      subtitle: 'Intercity hike',
+                      active: _tripType == 'hike',
+                      activeColor: const Color(0xFFE65100),
+                      onTap: () => setState(() {
+                        _tripType = 'hike';
+                        _origin = null;
+                        _destination = null;
+                      }),
+                    )),
+                  ]),
+                  if (_tripType == 'hike') ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      color: const Color(0xFFE65100).withValues(alpha: 0.08),
+                      child: Row(children: [
+                        const Icon(Icons.info_outline, size: 14, color: Color(0xFFE65100)),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(
+                          'Origin and destination can be in different cities. '
+                          'Riders may pay a pickup detour fee (up to K50).',
+                          style: GoogleFonts.manrope(fontSize: 11, color: const Color(0xFFE65100)),
+                        )),
+                      ]),
+                    ),
+                  ],
+                ]),
+              ),
+              const SizedBox(height: 12),
+
+              // ── Route card ─────────────────────────────────────────────────
               Container(
                 decoration: BoxDecoration(
                   color: cardBg,
@@ -184,9 +339,13 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
                   const SizedBox(height: 14),
                   PlacePicker(
                     label: 'ORIGIN',
-                    placeholder: 'Where are you starting from?',
+                    placeholder: _tripType == 'hike'
+                        ? 'Departure city / bus station'
+                        : 'Where are you starting from?',
                     icon: Icons.trip_origin,
                     selected: _origin,
+                    places: _places,
+                    cityLabel: _cityLabel,
                     onSelected: (p) => setState(() => _origin = p),
                   ),
                   const SizedBox(height: 4),
@@ -200,27 +359,26 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
                   const SizedBox(height: 4),
                   PlacePicker(
                     label: 'DESTINATION',
-                    placeholder: 'Where are you going?',
+                    placeholder: _tripType == 'hike'
+                        ? 'Arrival city / final stop'
+                        : 'Where are you going?',
                     icon: Icons.flag_outlined,
                     selected: _destination,
+                    places: _places,
+                    cityLabel: _cityLabel,
                     onSelected: (p) => setState(() => _destination = p),
                   ),
                 ]),
               ),
               const SizedBox(height: 12),
 
-              // Route map preview — shows once both places are chosen
-              if (_origin != null && _destination != null)
-                _TripRouteMap(
-                  origin: _origin!,
-                  destination: _destination!,
-                  isDark: isDark,
-                ),
-
-              if (_origin != null && _destination != null)
+              // Route map preview
+              if (_origin != null && _destination != null) ...[
+                _TripRouteMap(origin: _origin!, destination: _destination!, isDark: isDark),
                 const SizedBox(height: 12),
+              ],
 
-              // Departure time card
+              // ── Departure time card ────────────────────────────────────────
               Container(
                 decoration: BoxDecoration(
                   color: cardBg,
@@ -264,7 +422,40 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
               ),
               const SizedBox(height: 12),
 
-              // Seats card
+              // ── Booking cutoff (hike only) ────────────────────────────────
+              if (_tripType == 'hike') ...[
+                Container(
+                  decoration: BoxDecoration(
+                    color: cardBg,
+                    border: const Border(left: BorderSide(color: Color(0xFFE65100), width: 4)),
+                  ),
+                  padding: const EdgeInsets.all(16),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('BOOKING CLOSES', style: GoogleFonts.spaceGrotesk(
+                        fontSize: 9, fontWeight: FontWeight.w800,
+                        color: const Color(0xFFE65100), letterSpacing: 1.5)),
+                    const SizedBox(height: 4),
+                    Text('Stop accepting bookings before departure:',
+                        style: GoogleFonts.manrope(fontSize: 11,
+                            color: TwamboColors.textSecondary)),
+                    const SizedBox(height: 12),
+                    Wrap(spacing: 8, runSpacing: 8, children: [
+                      for (final (label, mins) in [
+                        ('30 min', 30), ('1 hr', 60), ('1.5 hr', 90),
+                        ('2 hr', 120), ('3 hr', 180),
+                      ])
+                        _CutoffChip(
+                          label: label, mins: mins,
+                          selected: _bookingCutoffMinutes == mins,
+                          onTap: () => setState(() => _bookingCutoffMinutes = mins),
+                        ),
+                    ]),
+                  ]),
+                ),
+                const SizedBox(height: 12),
+              ],
+
+              // ── Capacity card ──────────────────────────────────────────────
               Container(
                 decoration: BoxDecoration(
                   color: cardBg,
@@ -279,15 +470,13 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
                   Row(children: [
                     Expanded(child: _CounterField(
                       label: 'TOTAL SEATS',
-                      value: _seats,
-                      min: 1, max: 14,
+                      value: _seats, min: 1, max: 14,
                       onChanged: (v) => setState(() => _seats = v),
                     )),
                     const SizedBox(width: 12),
                     Expanded(child: _CounterField(
                       label: 'MIN. RIDERS',
-                      value: _minRiders,
-                      min: 1, max: _seats,
+                      value: _minRiders, min: 1, max: _seats,
                       onChanged: (v) => setState(() => _minRiders = v),
                     )),
                   ]),
@@ -295,7 +484,7 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
               ),
               const SizedBox(height: 12),
 
-              // Mode card
+              // ── Pricing mode card ──────────────────────────────────────────
               Container(
                 decoration: BoxDecoration(
                   color: cardBg,
@@ -303,35 +492,58 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
                 ),
                 padding: const EdgeInsets.all(16),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('RIDE MODE', style: GoogleFonts.spaceGrotesk(
+                  Text('PRICING MODE', style: GoogleFonts.spaceGrotesk(
                       fontSize: 9, fontWeight: FontWeight.w800,
                       color: TwamboColors.success, letterSpacing: 1.5)),
                   const SizedBox(height: 14),
-                  Row(children: [
-                    Expanded(child: _ModeToggle(
-                      label: 'Shared',
-                      icon: Icons.people_outline,
-                      subtitle: 'Multiple passengers',
-                      active: _mode == 'shared',
-                      onTap: () => setState(() => _mode = 'shared'),
-                    )),
-                    const SizedBox(width: 10),
-                    Expanded(child: _ModeToggle(
-                      label: 'Private',
-                      icon: Icons.person_outline,
-                      subtitle: 'One booking only',
-                      active: _mode == 'private',
-                      onTap: () => setState(() => _mode = 'private'),
-                    )),
-                    const SizedBox(width: 10),
-                    Expanded(child: _ModeToggle(
-                      label: 'Hike',
-                      icon: Icons.directions_walk,
-                      subtitle: 'Pickup requests',
-                      active: _mode == 'hike',
-                      onTap: () => setState(() => _mode = 'hike'),
-                    )),
-                  ]),
+                  if (_tripType == 'hike') ...[
+                    // Long distance: shared only
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: TwamboColors.success.withValues(alpha: 0.08),
+                        border: const Border(left: BorderSide(color: TwamboColors.success, width: 3)),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.people_outline, size: 16, color: TwamboColors.success),
+                        const SizedBox(width: 10),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text('SHARED — FIXED RATE', style: GoogleFonts.spaceGrotesk(
+                              fontSize: 10, fontWeight: FontWeight.w800,
+                              color: TwamboColors.success, letterSpacing: 1)),
+                          const SizedBox(height: 2),
+                          Text('Each city pickup pays the full route fare. Roadside pickups are half price — your call.',
+                              style: GoogleFonts.manrope(fontSize: 10, color: TwamboColors.textSecondary)),
+                        ])),
+                      ]),
+                    ),
+                  ] else ...[
+                    Row(children: [
+                      Expanded(child: _ModeToggle(
+                        label: 'Shared',
+                        icon: Icons.people_outline,
+                        subtitle: 'Split with riders',
+                        active: _mode == 'shared',
+                        onTap: () => setState(() => _mode = 'shared'),
+                      )),
+                      const SizedBox(width: 10),
+                      Expanded(child: _ModeToggle(
+                        label: 'Private',
+                        icon: Icons.person_outline,
+                        subtitle: 'One booking only',
+                        active: _mode == 'private',
+                        onTap: () => setState(() => _mode = 'private'),
+                      )),
+                      const SizedBox(width: 10),
+                      Expanded(child: _ModeToggle(
+                        label: 'Dynamic',
+                        icon: Icons.bolt_outlined,
+                        subtitle: 'Accept requests',
+                        active: _mode == 'dynamic',
+                        onTap: () => setState(() => _mode = 'dynamic'),
+                      )),
+                    ]),
+                  ],
                 ]),
               ),
 
@@ -350,19 +562,20 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
 
               const SizedBox(height: 24),
 
-              // Submit
               GestureDetector(
                 onTap: _loading ? null : _submit,
                 child: Container(
                   height: 52,
-                  color: TwamboColors.primary,
+                  color: _tripType == 'hike' ? const Color(0xFFE65100) : TwamboColors.primary,
                   alignment: Alignment.center,
                   child: _loading
                       ? const SizedBox(width: 22, height: 22,
                           child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2))
-                      : Text('CREATE TRIP', style: GoogleFonts.spaceGrotesk(
-                          fontSize: 14, fontWeight: FontWeight.w800,
-                          color: TwamboColors.textPrimary, letterSpacing: 1.5)),
+                      : Text(
+                          _tripType == 'hike' ? 'CREATE LONG DISTANCE TRIP' : 'CREATE TRIP',
+                          style: GoogleFonts.spaceGrotesk(
+                              fontSize: 14, fontWeight: FontWeight.w800,
+                              color: Colors.white, letterSpacing: 1.5)),
                 ),
               ),
               const SizedBox(height: 8),
@@ -377,8 +590,8 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
 // ── Route map preview ─────────────────────────────────────────────────────────
 
 class _TripRouteMap extends ConsumerWidget {
-  final KitwePlace origin;
-  final KitwePlace destination;
+  final TwamboPlace origin;
+  final TwamboPlace destination;
   final bool isDark;
   const _TripRouteMap({required this.origin, required this.destination, required this.isDark});
 
@@ -445,12 +658,8 @@ class _TripRouteMap extends ConsumerWidget {
               ]),
             ],
           ),
-
-          // Left border accent
           Positioned(left: 0, top: 0, bottom: 0,
             child: Container(width: 4, color: TwamboColors.primary)),
-
-          // Place name labels
           Positioned(
             top: 10, left: 14,
             child: Container(
@@ -479,7 +688,6 @@ class _TripRouteMap extends ConsumerWidget {
               ]),
             ),
           ),
-
           if (routeAsync.isLoading)
             const Positioned(
               right: 10, bottom: 10,
@@ -492,13 +700,56 @@ class _TripRouteMap extends ConsumerWidget {
   }
 }
 
+// ── Trip type toggle ──────────────────────────────────────────────────────────
+
+class _TypeToggle extends StatelessWidget {
+  final String label;
+  final String subtitle;
+  final IconData icon;
+  final bool active;
+  final Color activeColor;
+  final VoidCallback onTap;
+
+  const _TypeToggle({
+    required this.label, required this.subtitle,
+    required this.icon, required this.active,
+    required this.activeColor, required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+        decoration: BoxDecoration(
+          color: active ? activeColor : (isDark ? const Color(0xFF2A2A2A) : TwamboColors.surfaceAlt),
+          border: Border.all(
+            color: active ? activeColor : (isDark ? const Color(0xFF3E3E3E) : TwamboColors.line),
+            width: active ? 2 : 1,
+          ),
+        ),
+        child: Column(children: [
+          Icon(icon, size: 22, color: active ? Colors.white : TwamboColors.textSecondary),
+          const SizedBox(height: 6),
+          Text(label, style: GoogleFonts.spaceGrotesk(
+              fontSize: 11, fontWeight: FontWeight.w800,
+              color: active ? Colors.white : TwamboColors.textSecondary)),
+          Text(subtitle, style: GoogleFonts.manrope(
+              fontSize: 9, color: active ? Colors.white.withValues(alpha: 0.8) : TwamboColors.textSecondary),
+            textAlign: TextAlign.center),
+        ]),
+      ),
+    );
+  }
+}
+
 // ── Reusable counter ─────────────────────────────────────────────────────────
 
 class _CounterField extends StatelessWidget {
   final String label;
-  final int value;
-  final int min;
-  final int max;
+  final int value, min, max;
   final ValueChanged<int> onChanged;
 
   const _CounterField({
@@ -522,25 +773,18 @@ class _CounterField extends StatelessWidget {
         child: Row(children: [
           GestureDetector(
             onTap: value > min ? () => onChanged(value - 1) : null,
-            child: Container(
-              width: 38, height: 42,
-              alignment: Alignment.center,
-              child: Icon(Icons.remove, size: 16,
-                  color: value > min ? TwamboColors.textSecondary : TwamboColors.line),
-            ),
+            child: Container(width: 38, height: 42, alignment: Alignment.center,
+                child: Icon(Icons.remove, size: 16,
+                    color: value > min ? TwamboColors.textSecondary : TwamboColors.line)),
           ),
           Expanded(child: Text('$value', textAlign: TextAlign.center,
-              style: GoogleFonts.spaceGrotesk(
-                  fontSize: 18, fontWeight: FontWeight.w700,
+              style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w700,
                   color: isDark ? Colors.white : TwamboColors.textPrimary))),
           GestureDetector(
             onTap: value < max ? () => onChanged(value + 1) : null,
-            child: Container(
-              width: 38, height: 42,
-              alignment: Alignment.center,
-              child: Icon(Icons.add, size: 16,
-                  color: value < max ? TwamboColors.primary : TwamboColors.line),
-            ),
+            child: Container(width: 38, height: 42, alignment: Alignment.center,
+                child: Icon(Icons.add, size: 16,
+                    color: value < max ? TwamboColors.primary : TwamboColors.line)),
           ),
         ]),
       ),
@@ -549,6 +793,37 @@ class _CounterField extends StatelessWidget {
 }
 
 // ── Mode toggle tile ─────────────────────────────────────────────────────────
+
+class _CutoffChip extends StatelessWidget {
+  final String label;
+  final int mins;
+  final bool selected;
+  final VoidCallback onTap;
+  const _CutoffChip({required this.label, required this.mins, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFFE65100)
+              : (isDark ? const Color(0xFF2A2A2A) : TwamboColors.surfaceAlt),
+          border: Border.all(
+            color: selected ? const Color(0xFFE65100) : TwamboColors.line,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Text(label, style: GoogleFonts.spaceGrotesk(
+            fontSize: 11, fontWeight: FontWeight.w700,
+            color: selected ? Colors.white : TwamboColors.textSecondary)),
+      ),
+    );
+  }
+}
 
 class _ModeToggle extends StatelessWidget {
   final String label;

@@ -2,25 +2,36 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
-import '../dev/kitwe_places.dart';
+import '../dev/all_places.dart';
+import '../dev/twambo_place.dart';
 import '../dev/mock_trips.dart' show kShowMapTiles;
 import 'theme.dart';
 
-/// Tappable field that opens a search-and-select overlay for KitwePlaces.
-/// Includes a map pin option alongside the search list.
+/// Tappable field that opens a search-and-select overlay.
+///
+/// [places]    — the list to search. Pass [placesForCity] for a city-scoped
+///               picker or [allTwamboPlaces()] for a hike multi-city picker.
+/// [cityLabel] — shown in the search hint, e.g. "Kitwe" or "all cities".
+/// [mapCenter] — initial centre for the map-pin sheet (defaults to Kitwe).
 class PlacePicker extends StatelessWidget {
-  final KitwePlace? selected;
+  final TwamboPlace? selected;
   final String placeholder;
   final String label;
   final IconData icon;
-  final ValueChanged<KitwePlace> onSelected;
+  final ValueChanged<TwamboPlace> onSelected;
+  final List<TwamboPlace> places;
+  final String cityLabel;
+  final LatLng mapCenter;
 
   const PlacePicker({
     required this.label,
     required this.placeholder,
     required this.onSelected,
+    required this.places,
     this.selected,
+    this.cityLabel = 'your city',
     this.icon = Icons.location_on_outlined,
+    this.mapCenter = const LatLng(-12.8024, 28.2132),
     super.key,
   });
 
@@ -37,7 +48,6 @@ class PlacePicker extends StatelessWidget {
           color: TwamboColors.textSecondary, letterSpacing: 1.5)),
       const SizedBox(height: 6),
       Row(children: [
-        // Main search tap
         Expanded(
           child: GestureDetector(
             onTap: () => _openSearch(context),
@@ -60,9 +70,13 @@ class PlacePicker extends StatelessWidget {
                     : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Text(selected!.name, style: GoogleFonts.manrope(
                             fontSize: 13, fontWeight: FontWeight.w600, color: textColor)),
-                        if (selected!.tag != null)
-                          Text(selected!.tag!, style: GoogleFonts.manrope(
-                              fontSize: 10, color: TwamboColors.textSecondary)),
+                        if (selected!.tag != null || selected!.cityName.isNotEmpty)
+                          Text(
+                            [if (selected!.cityName.isNotEmpty) selected!.cityName,
+                             if (selected!.tag != null) selected!.tag!].join(' · '),
+                            style: GoogleFonts.manrope(
+                                fontSize: 10, color: TwamboColors.textSecondary),
+                          ),
                       ])),
                 Icon(
                   selected != null ? Icons.check_circle_outline : Icons.chevron_right,
@@ -73,7 +87,6 @@ class PlacePicker extends StatelessWidget {
             ),
           ),
         ),
-        // Map pin button
         GestureDetector(
           onTap: () => _openMap(context),
           child: Container(
@@ -88,21 +101,25 @@ class PlacePicker extends StatelessWidget {
   }
 
   Future<void> _openSearch(BuildContext context) async {
-    final result = await showModalBottomSheet<KitwePlace>(
+    final result = await showModalBottomSheet<TwamboPlace>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _PlaceSearchSheet(initial: selected),
+      builder: (_) => _PlaceSearchSheet(
+        initial: selected,
+        places: places,
+        cityLabel: cityLabel,
+      ),
     );
     if (result != null) onSelected(result);
   }
 
   Future<void> _openMap(BuildContext context) async {
-    final result = await showModalBottomSheet<KitwePlace>(
+    final result = await showModalBottomSheet<TwamboPlace>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _MapPickerSheet(title: label),
+      builder: (_) => _MapPickerSheet(title: label, center: mapCenter, places: places),
     );
     if (result != null) onSelected(result);
   }
@@ -111,8 +128,10 @@ class PlacePicker extends StatelessWidget {
 // ── Search sheet ──────────────────────────────────────────────────────────────
 
 class _PlaceSearchSheet extends StatefulWidget {
-  final KitwePlace? initial;
-  const _PlaceSearchSheet({this.initial});
+  final TwamboPlace? initial;
+  final List<TwamboPlace> places;
+  final String cityLabel;
+  const _PlaceSearchSheet({this.initial, required this.places, required this.cityLabel});
 
   @override
   State<_PlaceSearchSheet> createState() => _PlaceSearchSheetState();
@@ -120,11 +139,12 @@ class _PlaceSearchSheet extends StatefulWidget {
 
 class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
   final _ctrl = TextEditingController();
-  List<KitwePlace> _results = kitwePlaces;
+  late List<TwamboPlace> _results;
 
   @override
   void initState() {
     super.initState();
+    _results = widget.places;
     _ctrl.addListener(_filter);
   }
 
@@ -132,10 +152,11 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
     final q = _ctrl.text.toLowerCase();
     setState(() {
       _results = q.isEmpty
-          ? kitwePlaces
-          : kitwePlaces.where((p) =>
+          ? widget.places
+          : widget.places.where((p) =>
               p.name.toLowerCase().contains(q) ||
-              (p.tag?.toLowerCase().contains(q) ?? false)).toList();
+              (p.tag?.toLowerCase().contains(q) ?? false) ||
+              p.cityName.toLowerCase().contains(q)).toList();
     });
   }
 
@@ -159,12 +180,10 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
         border: const Border(left: BorderSide(color: TwamboColors.primary, width: 4)),
       ),
       child: Column(children: [
-        // Handle
         const SizedBox(height: 8),
         Container(width: 36, height: 4, color: TwamboColors.line),
         const SizedBox(height: 12),
 
-        // Header
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(children: [
@@ -179,7 +198,6 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
         ),
         const SizedBox(height: 12),
 
-        // Search field
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Container(
@@ -192,12 +210,12 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
               autofocus: true,
               style: GoogleFonts.manrope(fontSize: 13, color: textColor),
               decoration: InputDecoration(
-                hintText: 'Search places in Kitwe…',
+                hintText: 'Search places in ${widget.cityLabel}…',
                 hintStyle: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary),
                 prefixIcon: const Icon(Icons.search, size: 18, color: TwamboColors.textSecondary),
                 suffixIcon: _ctrl.text.isNotEmpty
                     ? GestureDetector(
-                        onTap: () { _ctrl.clear(); },
+                        onTap: _ctrl.clear,
                         child: const Icon(Icons.clear, size: 16, color: TwamboColors.textSecondary),
                       )
                     : null,
@@ -209,7 +227,6 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
         ),
         const SizedBox(height: 8),
 
-        // Count
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Align(alignment: Alignment.centerLeft,
@@ -219,12 +236,11 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
         ),
         const SizedBox(height: 4),
 
-        // Results
         Expanded(child: ListView.builder(
           itemCount: _results.length,
           itemBuilder: (_, i) {
             final p = _results[i];
-            final isSelected = widget.initial?.name == p.name;
+            final isSelected = widget.initial?.name == p.name && widget.initial?.cityId == p.cityId;
             return GestureDetector(
               onTap: () => Navigator.pop(context, p),
               child: Container(
@@ -240,19 +256,20 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
                 child: Row(children: [
-                  Icon(
-                    _tagIcon(p.tag),
-                    size: 16,
-                    color: isSelected ? TwamboColors.primary : TwamboColors.textSecondary,
-                  ),
+                  Icon(_tagIcon(p.tag), size: 16,
+                      color: isSelected ? TwamboColors.primary : TwamboColors.textSecondary),
                   const SizedBox(width: 10),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text(p.name, style: GoogleFonts.manrope(
                         fontSize: 13, fontWeight: FontWeight.w600,
                         color: isSelected ? TwamboColors.primary : textColor)),
-                    if (p.tag != null)
-                      Text(p.tag!, style: GoogleFonts.manrope(
-                          fontSize: 10, color: TwamboColors.textSecondary)),
+                    if (p.tag != null || p.cityName.isNotEmpty)
+                      Text(
+                        [if (p.cityName.isNotEmpty) p.cityName,
+                         if (p.tag != null) p.tag!].join(' · '),
+                        style: GoogleFonts.manrope(
+                            fontSize: 10, color: TwamboColors.textSecondary),
+                      ),
                   ])),
                   if (isSelected)
                     const Icon(Icons.check_circle, size: 16, color: TwamboColors.primary),
@@ -267,14 +284,17 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
 
   IconData _tagIcon(String? tag) {
     switch (tag) {
-      case 'Market': return Icons.storefront_outlined;
-      case 'Shopping': return Icons.shopping_bag_outlined;
-      case 'Hospital': return Icons.local_hospital_outlined;
-      case 'School': return Icons.school_outlined;
+      case 'Market':    return Icons.storefront_outlined;
+      case 'Shopping':  return Icons.shopping_bag_outlined;
+      case 'Hospital':  return Icons.local_hospital_outlined;
+      case 'School':    return Icons.school_outlined;
       case 'Transport': return Icons.directions_bus_outlined;
-      case 'Park': return Icons.park_outlined;
-      case 'Street': return Icons.turn_right_outlined;
-      default: return Icons.location_on_outlined;
+      case 'Park':      return Icons.park_outlined;
+      case 'Street':    return Icons.turn_right_outlined;
+      case 'Fuel':      return Icons.local_gas_station_outlined;
+      case 'Lodge':     return Icons.hotel_outlined;
+      case 'Mine':      return Icons.factory_outlined;
+      default:          return Icons.location_on_outlined;
     }
   }
 }
@@ -283,15 +303,23 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
 
 class _MapPickerSheet extends StatefulWidget {
   final String title;
-  const _MapPickerSheet({required this.title});
+  final LatLng center;
+  final List<TwamboPlace> places;
+  const _MapPickerSheet({required this.title, required this.center, required this.places});
   @override
   State<_MapPickerSheet> createState() => _MapPickerSheetState();
 }
 
 class _MapPickerSheetState extends State<_MapPickerSheet> {
   final _mapCtrl = MapController();
-  LatLng _center = const LatLng(-12.8024, 28.2132);
+  late LatLng _center;
   bool _confirming = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _center = widget.center;
+  }
 
   @override
   void dispose() {
@@ -299,12 +327,10 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
     super.dispose();
   }
 
-
-
   String _nearestName(double lat, double lng) {
-    KitwePlace? nearest;
+    TwamboPlace? nearest;
     double minDist = double.infinity;
-    for (final p in kitwePlaces) {
+    for (final p in widget.places) {
       final dLat = lat - p.lat;
       final dLng = lng - p.lng;
       final d = dLat * dLat + dLng * dLng;
@@ -317,13 +343,26 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
     return 'Pinned location';
   }
 
+  String _nearestCityId(double lat, double lng) {
+    TwamboPlace? nearest;
+    double minDist = double.infinity;
+    for (final p in widget.places) {
+      final dLat = lat - p.lat;
+      final dLng = lng - p.lng;
+      final d = dLat * dLat + dLng * dLng;
+      if (d < minDist) { minDist = d; nearest = p; }
+    }
+    return nearest?.cityId ?? '';
+  }
+
   Future<void> _confirm() async {
     setState(() => _confirming = true);
     LatLng pos;
     try { pos = _mapCtrl.camera.center; } catch (_) { pos = _center; }
     final name = _nearestName(pos.latitude, pos.longitude);
+    final cityId = _nearestCityId(pos.latitude, pos.longitude);
     if (mounted) {
-      Navigator.pop(context, KitwePlace(name, pos.latitude, pos.longitude));
+      Navigator.pop(context, TwamboPlace(name, pos.latitude, pos.longitude, cityId: cityId));
     }
   }
 
@@ -336,7 +375,6 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
     return SizedBox(
       height: MediaQuery.of(context).size.height * 0.88,
       child: Column(children: [
-        // Header
         Container(
           color: bg,
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
@@ -366,13 +404,12 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
           ]),
         ),
 
-        // Map
         Expanded(
           child: Stack(children: [
             FlutterMap(
               mapController: _mapCtrl,
               options: MapOptions(
-                initialCenter: const LatLng(-12.8024, 28.2132),
+                initialCenter: widget.center,
                 initialZoom: 14.5,
                 onMapEvent: (event) {
                   setState(() => _center = event.camera.center);
@@ -388,8 +425,6 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
                   const ColoredBox(color: Color(0xFFD8DADB), child: SizedBox.expand()),
               ],
             ),
-
-            // Center pin
             Center(
               child: Transform.translate(
                 offset: const Offset(0, -24),
@@ -398,14 +433,10 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
                     shadows: const [Shadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 2))]),
               ),
             ),
-
-            // Crosshair dot
             Center(
               child: Container(width: 4, height: 4,
                   decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white)),
             ),
-
-            // Live coordinate label
             Positioned(
               bottom: 8, left: 0, right: 0,
               child: Center(
@@ -423,7 +454,6 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
           ]),
         ),
 
-        // Confirm button
         Container(
           color: bg,
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),

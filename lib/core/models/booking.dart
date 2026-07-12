@@ -16,6 +16,7 @@ class Booking {
   final double detourFee;
   final String status;
   final String paymentMethod;
+  final String tripType; // 'city' | 'hike'
   final DateTime createdAt;
 
   const Booking({
@@ -36,6 +37,7 @@ class Booking {
     required this.detourFee,
     required this.status,
     required this.paymentMethod,
+    this.tripType = 'city',
     required this.createdAt,
   });
 
@@ -45,6 +47,7 @@ class Booking {
   bool get isCompleted => status == 'completed';
   bool get isNoShow => status == 'no_show';
   bool get isActive => isPending || isConfirmed;
+  bool get isHike   => tripType == 'hike';
 
   Booking copyWith({String? status, String? driverName, String? driverPhone, int? tripId, int? driverId}) => Booking(
     id: id, tripId: tripId ?? this.tripId, driverId: driverId ?? this.driverId,
@@ -55,7 +58,7 @@ class Booking {
     seatsBooked: seatsBooked, fareAtBooking: fareAtBooking,
     fareFinal: fareFinal, amountDue: amountDue, detourFee: detourFee,
     status: status ?? this.status,
-    paymentMethod: paymentMethod, createdAt: createdAt,
+    paymentMethod: paymentMethod, tripType: tripType, createdAt: createdAt,
   );
 
   factory Booking.fromJson(Map<String, dynamic> j) => Booking(
@@ -78,6 +81,7 @@ class Booking {
         detourFee: double.parse(j['detour_fee'].toString()),
         status: j['status'],
         paymentMethod: j['payment_method'],
+        tripType: j['trip_type'] ?? 'city',
         createdAt: DateTime.parse(j['created_at']),
       );
 }

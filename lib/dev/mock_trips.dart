@@ -137,12 +137,23 @@ void addMockDriverTrip({
   required String destinationName, required double destinationLat, required double destinationLng,
   required DateTime departureTime, required int totalSeats, required int minimumRiders,
   required String mode, required double fare,
+  double? routeFare, // hike trips: total route cost; shared fare = routeFare / totalSeats
   required int driverId, required String driverName,
+  String tripType = 'city',
+  int bookingCutoffMinutes = 0,
 }) {
   final id = _nextDriverTripId++;
-  // Trips departing more than 2 min in the future start as scheduled
   final isImmediate = departureTime.difference(DateTime.now()).inMinutes < 2;
   final initialStatus = isImmediate ? 'active' : 'scheduled';
+  final closesAt = bookingCutoffMinutes > 0
+      ? departureTime.subtract(Duration(minutes: bookingCutoffMinutes))
+      : null;
+
+  // Hike: route_fare IS the per-seat price — every city rider pays it flat.
+  // City: fare is the per-seat shared price (mock doesn't simulate dynamic seat splitting).
+  final rf = routeFare ?? fare;
+  final sharedFare = tripType == 'hike' ? rf : fare;
+  final privateFare = tripType == 'hike' ? rf * 1.6 : fare * 3;
 
   mockDriverTrips.insert(0, Trip(
     id: id, driverId: driverId, driverName: driverName,
@@ -150,10 +161,12 @@ void addMockDriverTrip({
     vehicleMakeModel: '${mockVehicle['make']} ${mockVehicle['model']} · ABZ 1234',
     originName: originName, originLat: originLat, originLng: originLng,
     destinationName: destinationName, destinationLat: destinationLat, destinationLng: destinationLng,
-    departureTime: departureTime, status: initialStatus, mode: mode,
+    departureTime: departureTime, status: initialStatus, mode: mode, tripType: tripType,
     totalSeats: totalSeats, availableSeats: totalSeats, seatsTaken: 0,
-    currentSharedFare: fare, privateFare: fare * 3,
-    bookingWindowOpen: true, minimumRiders: minimumRiders,
+    currentSharedFare: sharedFare, privateFare: privateFare,
+    bookingWindowOpen: closesAt == null || DateTime.now().isBefore(closesAt),
+    bookingWindowClosesAt: closesAt,
+    minimumRiders: minimumRiders,
   ));
   mockTripRideRequests[id] = [];
   mockPassengers[id] = [];

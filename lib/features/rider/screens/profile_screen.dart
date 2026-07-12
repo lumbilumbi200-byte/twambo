@@ -2,11 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../../core/api/api_client.dart';
+import '../../../core/api/endpoints.dart';
 import '../../../dev/kitwe_places.dart';
 import '../../../features/auth/auth_provider.dart';
 import '../../../shared/app_providers.dart';
 import '../../../shared/rider_nav_bar.dart';
 import '../../../shared/theme.dart';
+
+final _riderProfileProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  final resp = await ApiClient.dio.get(Endpoints.riderProfile);
+  return resp.data as Map<String, dynamic>;
+});
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -16,7 +23,7 @@ class ProfileScreen extends ConsumerWidget {
     final user = ref.watch(authProvider).user;
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
-    final saved = ref.watch(savedLocationsProvider);
+    final saved = ref.watch(savedLocationsProvider).asData?.value ?? {'home': null, 'work': null};
     final initials = _initials(user?.fullName ?? '');
 
     final bg = isDark ? const Color(0xFF0D0D0D) : TwamboColors.bg;
@@ -150,6 +157,25 @@ class ProfileScreen extends ConsumerWidget {
                   onClear: () => ref.read(savedLocationsProvider.notifier).clear('work'),
                 ),
 
+                // ── Safety ────────────────────────────────────────────────
+                const SizedBox(height: 20),
+                _SectionLabel('SAFETY', isDark),
+                const SizedBox(height: 8),
+                Builder(builder: (_) {
+                  final profileAsync = ref.watch(_riderProfileProvider);
+                  final ecName  = profileAsync.asData?.value['emergency_contact_name']  as String? ?? '';
+                  final ecPhone = profileAsync.asData?.value['emergency_contact_phone'] as String? ?? '';
+                  return _SettingsTile(
+                    icon: Icons.emergency_rounded,
+                    label: 'Emergency Contact',
+                    subtitle: ecName.isNotEmpty
+                        ? '$ecName · $ecPhone'
+                        : 'Not set — tap to add',
+                    isDark: isDark,
+                    onTap: () => _editEmergencyContact(context, ref, ecName, ecPhone),
+                  );
+                }),
+
                 // ── Account ────────────────────────────────────────────────
                 const SizedBox(height: 20),
                 _SectionLabel('ACCOUNT', isDark),
@@ -258,16 +284,21 @@ class ProfileScreen extends ConsumerWidget {
             child: Text('Cancel', style: TextStyle(color: TwamboColors.textSecondary)),
           ),
           GestureDetector(
-            onTap: () {
+            onTap: () async {
               final name  = nameCtrl.text.trim();
               final phone = phoneCtrl.text.trim();
               if (name.isNotEmpty || phone.isNotEmpty) {
-                ref.read(authProvider.notifier).updateProfile(
+                final err = await ref.read(authProvider.notifier).updateProfile(
                   fullName: name.isNotEmpty ? name : null,
                   phoneNumber: phone.isNotEmpty ? phone : null,
                 );
+                if (err != null && ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(content: Text(err), backgroundColor: TwamboColors.error));
+                  return;
+                }
               }
-              Navigator.pop(ctx);
+              if (ctx.mounted) Navigator.pop(ctx);
             },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -291,6 +322,75 @@ class ProfileScreen extends ConsumerWidget {
       builder: (_) => _QuickPlacePicker(title: title),
     );
     return query;
+  }
+
+  Future<void> _editEmergencyContact(BuildContext context, WidgetRef ref,
+      String currentName, String currentPhone) async {
+    final nameCtrl  = TextEditingController(text: currentName);
+    final phoneCtrl = TextEditingController(text: currentPhone);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        title: Row(children: [
+          Container(width: 4, height: 24, color: TwamboColors.error),
+          const SizedBox(width: 10),
+          Text('Emergency Contact',
+              style: GoogleFonts.spaceGrotesk(
+                  fontWeight: FontWeight.w800,
+                  color: isDark ? Colors.white : TwamboColors.textPrimary)),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('This contact will be called via SOS during a trip.',
+                style: GoogleFonts.manrope(
+                    fontSize: 12, color: TwamboColors.textSecondary)),
+            const SizedBox(height: 16),
+            _EditField(ctrl: nameCtrl,  label: 'Contact Name',  icon: Icons.person_outline,  isDark: isDark),
+            const SizedBox(height: 12),
+            _EditField(ctrl: phoneCtrl, label: 'Phone Number', icon: Icons.phone_outlined,
+                keyboardType: TextInputType.phone, isDark: isDark),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel', style: TextStyle(color: TwamboColors.textSecondary)),
+          ),
+          GestureDetector(
+            onTap: () async {
+              try {
+                await ApiClient.dio.patch(Endpoints.riderProfile, data: {
+                  'emergency_contact_name':  nameCtrl.text.trim(),
+                  'emergency_contact_phone': phoneCtrl.text.trim(),
+                });
+                ref.invalidate(_riderProfileProvider);
+                if (ctx.mounted) Navigator.pop(ctx);
+              } catch (_) {
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('Failed to save. Try again.'),
+                        backgroundColor: TwamboColors.error));
+                }
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              color: TwamboColors.primary,
+              child: Text('SAVE',
+                  style: GoogleFonts.spaceGrotesk(
+                      fontSize: 12, fontWeight: FontWeight.w800,
+                      color: TwamboColors.textPrimary, letterSpacing: 1)),
+            ),
+          ),
+        ],
+      ),
+    );
+    nameCtrl.dispose();
+    phoneCtrl.dispose();
   }
 
   void _showAbout(BuildContext context) {

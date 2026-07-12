@@ -6,6 +6,7 @@ class User {
   final String? profilePhoto;
   final int strikeCount;
   final bool isBanned;
+  final int fareSurchargePct;
   final String? driverVerificationStatus; // 'pending' | 'approved' | 'rejected' | 'suspended'
 
   const User({
@@ -16,6 +17,7 @@ class User {
     this.profilePhoto,
     required this.strikeCount,
     required this.isBanned,
+    this.fareSurchargePct = 0,
     this.driverVerificationStatus,
   });
 
@@ -31,6 +33,7 @@ class User {
         profilePhoto: j['profile_photo'],
         strikeCount: j['strike_count'] ?? 0,
         isBanned: j['is_banned'] ?? false,
+        fareSurchargePct: j['fare_surcharge_pct'] ?? 0,
         driverVerificationStatus: j['driver_verification_status'],
       );
 }

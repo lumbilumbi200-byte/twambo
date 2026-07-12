@@ -124,7 +124,9 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
           error: (e, _) => Center(child: Text('Error: $e', style: const TextStyle(color: TwamboColors.error))),
           data: (trips) {
             final active = trips.where((t) => t.isActive).toList();
-            final upcoming = trips.where((t) => t.isScheduled).toList();
+            final scheduled = trips.where((t) => t.isScheduled).toList();
+            final upcoming = scheduled.where((t) => t.isCityTrip).toList();
+            final hikePlanned = scheduled.where((t) => t.isHike).toList();
 
             return RefreshIndicator(
               color: TwamboColors.primary,
@@ -233,11 +235,11 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                     const SliverToBoxAdapter(child: SizedBox(height: 12)),
                   ],
 
-                  // ── Upcoming ─────────────────────────────────────────────
+                  // ── Upcoming city trips ───────────────────────────────────
                   if (upcoming.isNotEmpty) ...[
                     SliverToBoxAdapter(child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-                      child: Text('UPCOMING (${upcoming.length})', style: GoogleFonts.spaceGrotesk(
+                      child: Text('UPCOMING CITY (${upcoming.length})', style: GoogleFonts.spaceGrotesk(
                           fontSize: 9, fontWeight: FontWeight.w800,
                           color: TwamboColors.textSecondary, letterSpacing: 2)),
                     )),
@@ -245,10 +247,33 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                       (_, i) => _UpcomingTripCard(trip: upcoming[i]),
                       childCount: upcoming.length,
                     )),
+                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                  ],
+
+                  // ── Long distance trips ───────────────────────────────────
+                  if (hikePlanned.isNotEmpty) ...[
+                    SliverToBoxAdapter(child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                      child: Row(children: [
+                        Container(
+                          width: 3, height: 12,
+                          color: const Color(0xFFE65100),
+                          margin: const EdgeInsets.only(right: 8),
+                        ),
+                        Text('LONG DISTANCE (${hikePlanned.length})', style: GoogleFonts.spaceGrotesk(
+                            fontSize: 9, fontWeight: FontWeight.w800,
+                            color: const Color(0xFFE65100), letterSpacing: 2)),
+                      ]),
+                    )),
+                    SliverList(delegate: SliverChildBuilderDelegate(
+                      (_, i) => _HikeTripCard(trip: hikePlanned[i]),
+                      childCount: hikePlanned.length,
+                    )),
+                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
                   ],
 
                   // ── Empty state ───────────────────────────────────────────
-                  if (active.isEmpty && upcoming.isEmpty)
+                  if (active.isEmpty && upcoming.isEmpty && hikePlanned.isEmpty)
                     SliverToBoxAdapter(child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 32),
                       child: Column(children: [
@@ -274,20 +299,41 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                   SliverToBoxAdapter(child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
                     child: Column(children: [
-                      GestureDetector(
-                        onTap: () => context.go('/driver/create'),
-                        child: Container(
-                          height: 52, width: double.infinity,
-                          color: TwamboColors.primary,
-                          child: Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
-                            const Icon(Icons.add, size: 18, color: TwamboColors.textPrimary),
-                            const SizedBox(width: 8),
-                            Text('NEW TRIP', style: GoogleFonts.spaceGrotesk(
-                                fontSize: 13, fontWeight: FontWeight.w800,
-                                color: TwamboColors.textPrimary, letterSpacing: 1)),
-                          ])),
+                      Row(children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => context.go('/driver/create'),
+                            child: Container(
+                              height: 52,
+                              color: TwamboColors.primary,
+                              child: Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                const Icon(Icons.add, size: 18, color: TwamboColors.textPrimary),
+                                const SizedBox(width: 6),
+                                Text('NEW CITY TRIP', style: GoogleFonts.spaceGrotesk(
+                                    fontSize: 11, fontWeight: FontWeight.w800,
+                                    color: TwamboColors.textPrimary, letterSpacing: 1)),
+                              ])),
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => context.go('/driver/create', extra: 'hike'),
+                            child: Container(
+                              height: 52,
+                              color: const Color(0xFFE65100),
+                              child: Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                const Icon(Icons.route_rounded, size: 18, color: Colors.white),
+                                const SizedBox(width: 6),
+                                Text('LONG DISTANCE', style: GoogleFonts.spaceGrotesk(
+                                    fontSize: 11, fontWeight: FontWeight.w800,
+                                    color: Colors.white, letterSpacing: 1)),
+                              ])),
+                            ),
+                          ),
+                        ),
+                      ]),
                       const SizedBox(height: 10),
                       GestureDetector(
                         onTap: () => context.go('/driver/recurring'),
@@ -517,6 +563,128 @@ class _ActiveTripCard extends ConsumerWidget {
         ]),
       ]),
     );
+  }
+}
+
+// ── Hike Trip Card ────────────────────────────────────────────────────────────
+
+class _HikeTripCard extends StatelessWidget {
+  final Trip trip;
+  const _HikeTripCard({required this.trip});
+
+  static const _orange = Color(0xFFE65100);
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
+    final seatsBooked = trip.seatsTaken;
+    final earningsPotential = trip.currentSharedFare * seatsBooked;
+    final countdown = _countdown(trip.departureTime);
+    final bookingClosed = !trip.bookingWindowOpen;
+
+    return GestureDetector(
+      onTap: () => context.go('/driver/trip/${trip.id}'),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        decoration: BoxDecoration(
+          color: cardBg,
+          border: const Border(left: BorderSide(color: _orange, width: 4)),
+        ),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              color: _orange.withValues(alpha: 0.12),
+              child: Text('LONG DISTANCE', style: GoogleFonts.spaceGrotesk(
+                  fontSize: 7, fontWeight: FontWeight.w800,
+                  color: _orange, letterSpacing: 2)),
+            ),
+            const SizedBox(width: 8),
+            if (bookingClosed)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                color: TwamboColors.textSecondary.withValues(alpha: 0.12),
+                child: Text('BOOKING CLOSED', style: GoogleFonts.spaceGrotesk(
+                    fontSize: 7, fontWeight: FontWeight.w700,
+                    color: TwamboColors.textSecondary, letterSpacing: 1.5)),
+              ),
+            const Spacer(),
+            Text('$seatsBooked/${trip.totalSeats} BOOKED',
+                style: GoogleFonts.spaceGrotesk(
+                    fontSize: 9, fontWeight: FontWeight.w700,
+                    color: seatsBooked > 0 ? TwamboColors.success : TwamboColors.textSecondary)),
+          ]),
+          const SizedBox(height: 10),
+          Text('${trip.originName} → ${trip.destinationName}',
+              style: GoogleFonts.spaceGrotesk(fontSize: 15, fontWeight: FontWeight.w800, color: textColor),
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 6),
+          Row(children: [
+            const Icon(Icons.schedule_rounded, size: 12, color: TwamboColors.textSecondary),
+            const SizedBox(width: 4),
+            Text(_fmtDateTime(trip.departureTime),
+                style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.textSecondary)),
+            if (countdown != null) ...[
+              const SizedBox(width: 8),
+              const Icon(Icons.timer_outlined, size: 12, color: _orange),
+              const SizedBox(width: 3),
+              Text(countdown,
+                  style: GoogleFonts.manrope(fontSize: 11, fontWeight: FontWeight.w600, color: _orange)),
+            ],
+          ]),
+          const SizedBox(height: 4),
+          Row(children: [
+            const Icon(Icons.payments_outlined, size: 12, color: TwamboColors.textSecondary),
+            const SizedBox(width: 4),
+            Text('K${trip.currentSharedFare.toStringAsFixed(0)}/seat',
+                style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.textSecondary)),
+            if (seatsBooked > 0) ...[
+              const SizedBox(width: 8),
+              Text('· K${earningsPotential.toStringAsFixed(0)} earnings',
+                  style: GoogleFonts.manrope(
+                      fontSize: 11, fontWeight: FontWeight.w600,
+                      color: TwamboColors.success)),
+            ],
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: () => context.go('/driver/trip/${trip.id}'),
+                child: Container(
+                  height: 34, color: _orange,
+                  child: Center(child: Text('MANAGE TRIP',
+                      style: GoogleFonts.spaceGrotesk(
+                          fontSize: 9, fontWeight: FontWeight.w800,
+                          color: Colors.white, letterSpacing: 1))),
+                ),
+              ),
+            ),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  String _fmtDateTime(DateTime dt) {
+    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '${dt.day} ${months[dt.month - 1]}  $h:$m';
+  }
+
+  String? _countdown(DateTime departure) {
+    final diff = departure.toLocal().difference(DateTime.now());
+    if (diff.isNegative) return null;
+    if (diff.inDays >= 2) return '${diff.inDays}d away';
+    final h = diff.inHours;
+    final m = diff.inMinutes % 60;
+    if (h >= 1) return m > 0 ? '${h}h ${m}m' : '${h}h';
+    return '${diff.inMinutes}m';
   }
 }
 

@@ -12,15 +12,18 @@ import '../../../core/api/api_client.dart';
 import '../../../core/api/endpoints.dart';
 import '../../../core/models/booking.dart';
 import '../../../core/models/trip.dart';
-import '../../../dev/kitwe_places.dart';
+import '../../../dev/all_places.dart';
+import '../../../dev/city_regions.dart';
+import '../../../dev/copperbelt/kitwe_places.dart' show haversineKm, estimatePrivateFare, estimateDynamicFare;
 import '../../../dev/mock_trips.dart';
+import '../../../dev/twambo_place.dart';
 import '../../../features/auth/auth_provider.dart';
 import '../../../shared/app_providers.dart';
 import '../../../shared/rider_nav_bar.dart';
 import '../../../shared/theme.dart';
 
-// (destination, date yyyy-MM-dd|null, minSeats, mode|null)
-typedef _SearchKey = (String, String?, int, String?);
+// (destination, date yyyy-MM-dd|null, minSeats, mode|null, tripType, origin)
+typedef _SearchKey = (String, String?, int, String?, String, String);
 
 // ── Marketing slide model from API ────────────────────────────────────────────
 
@@ -80,21 +83,36 @@ final _activeRideApiProvider = FutureProvider.autoDispose<_ActiveRideInfo?>((ref
 });
 
 final tripSearchProvider = FutureProvider.autoDispose.family<List<Trip>, _SearchKey>((ref, key) async {
-  final (destination, date, minSeats, mode) = key;
+  final (destination, date, minSeats, mode, tripType, origin) = key;
   if (kUseMockData) {
     await Future.delayed(const Duration(milliseconds: 400));
-    final all = mockVisibleTrips;
-    if (destination.isEmpty) return all;
+    var all = mockVisibleTrips;
+    if (tripType.isNotEmpty) {
+      all = all.where((t) => t.tripType == tripType).toList();
+    }
+    if (origin.isNotEmpty) {
+      final o = origin.toLowerCase();
+      all = all.where((t) => t.originName.toLowerCase().contains(o)).toList();
+    }
+    if (destination.isEmpty) {
+      if (tripType == 'hike') all.sort((a, b) => a.departureTime.compareTo(b.departureTime));
+      return all;
+    }
     final q = destination.toLowerCase();
-    return all.where((t) =>
+    final results = all.where((t) =>
         t.originName.toLowerCase().contains(q) ||
         t.destinationName.toLowerCase().contains(q)).toList();
+    if (tripType == 'hike') results.sort((a, b) => a.departureTime.compareTo(b.departureTime));
+    return results;
   }
   final resp = await ApiClient.dio.get(Endpoints.tripSearch, queryParameters: {
+    if (origin.isNotEmpty) 'origin': origin,
     if (destination.isNotEmpty) 'destination': destination,
     if (date != null) 'date': date,
     if (minSeats > 1) 'min_seats': minSeats,
     if (mode != null) 'mode': mode,
+    if (tripType.isNotEmpty) 'trip_type': tripType,
+    if (tripType == 'hike') 'ordering': 'departure_time',
   });
   final raw = resp.data is List ? resp.data as List : (resp.data['results'] as List? ?? []);
   return raw.map<Trip>((j) => Trip.fromJson(j as Map<String, dynamic>)).toList();
@@ -108,9 +126,16 @@ class TripSearchScreen extends ConsumerStatefulWidget {
 }
 
 class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
-  KitwePlace? _fromPlace;
-  KitwePlace? _toPlace;
+  TwamboPlace? _fromPlace;
+  TwamboPlace? _toPlace;
+  CityRegion? _detectedCity;  // rider's current city (GPS-detected)
+  CityRegion? _fromCity; // long-distance origin city
+  CityRegion? _toCity;   // long-distance destination city
+
+  List<TwamboPlace> get _cityPlaces =>
+      placesForCity(_detectedCity?.id ?? 'kitwe');
   bool _isGrid = true;
+  String _tripType = 'city'; // 'city' | 'hike'
   Timer? _activeRideTimer;
 
   // Filters
@@ -123,18 +148,34 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
       (_filterMinSeats > 1 ? 1 : 0) +
       (_filterMode != null ? 1 : 0);
 
-  _SearchKey get _searchKey => (
-    _toPlace?.name ?? '',
-    _filterDate != null
+  _SearchKey get _searchKey {
+    final dateStr = _filterDate != null
         ? '${_filterDate!.year}-${_filterDate!.month.toString().padLeft(2,'0')}-${_filterDate!.day.toString().padLeft(2,'0')}'
-        : null,
-    _filterMinSeats,
-    _filterMode,
-  );
+        : null;
+    if (_tripType == 'hike') {
+      return (
+        _toCity?.name ?? '',
+        dateStr,
+        _filterMinSeats,
+        _filterMode,
+        'hike',
+        _fromCity?.name ?? '',
+      );
+    }
+    return (
+      _toPlace?.name ?? '',
+      dateStr,
+      _filterMinSeats,
+      _filterMode,
+      'city',
+      '',
+    );
+  }
 
   @override
   void initState() {
     super.initState();
+    _detectUserCity();
     // Poll mock booking state so active ride card updates live
     _activeRideTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted) return;
@@ -144,6 +185,24 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
         ref.invalidate(_activeRideApiProvider);
       }
     });
+  }
+
+  Future<void> _detectUserCity() async {
+    try {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return;
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.low),
+      );
+      final city = detectCity(pos.latitude, pos.longitude) ??
+          nearestCity(pos.latitude, pos.longitude);
+      if (mounted) setState(() => _detectedCity = city);
+    } catch (_) {
+      // GPS unavailable — fall back to Kitwe
+    }
   }
 
   @override
@@ -185,8 +244,8 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
     }
   }
 
-  void _selectFrom(KitwePlace p) => setState(() => _fromPlace = p);
-  void _selectTo(KitwePlace p)   => setState(() => _toPlace = p);
+  void _selectFrom(TwamboPlace p) => setState(() => _fromPlace = p);
+  void _selectTo(TwamboPlace p)   => setState(() => _toPlace = p);
 
   void _swap() {
     if (_fromPlace == null && _toPlace == null) { return; }
@@ -194,30 +253,46 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
   }
 
   Future<void> _openFromPicker() async {
-    final result = await showModalBottomSheet<KitwePlace>(
+    final result = await showModalBottomSheet<TwamboPlace>(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
-      builder: (_) => _PlacePickerSheet(title: 'SELECT PICK-UP', initial: _fromPlace?.name ?? ''),
+      builder: (_) => _PlacePickerSheet(
+        title: 'SELECT PICK-UP', initial: _fromPlace?.name ?? '',
+        places: _cityPlaces, cityName: _detectedCity?.name ?? 'Kitwe',
+      ),
     );
     if (result != null && mounted) { _selectFrom(result); }
   }
 
   Future<void> _openToPicker() async {
-    final result = await showModalBottomSheet<KitwePlace>(
+    final result = await showModalBottomSheet<TwamboPlace>(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
-      builder: (_) => _PlacePickerSheet(title: 'SELECT DROP-OFF', initial: _toPlace?.name ?? ''),
+      builder: (_) => _PlacePickerSheet(
+        title: 'SELECT DROP-OFF', initial: _toPlace?.name ?? '',
+        places: _cityPlaces, cityName: _detectedCity?.name ?? 'Kitwe',
+      ),
     );
     if (result != null && mounted) { _selectTo(result); }
   }
 
   Future<void> _openMapPicker(bool isFrom) async {
-    final result = await showModalBottomSheet<KitwePlace>(
+    final result = await showModalBottomSheet<TwamboPlace>(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
-      builder: (_) => _MapPickerSheet(title: isFrom ? 'SELECT PICK-UP' : 'SELECT DROP-OFF'),
+      builder: (_) => _MapPickerSheet(
+        title: isFrom ? 'SELECT PICK-UP' : 'SELECT DROP-OFF',
+        places: _cityPlaces,
+      ),
     );
     if (result != null) {
       if (isFrom) { _selectFrom(result); }
       else { _selectTo(result); }
     }
+  }
+
+  Future<CityRegion?> _openCityPicker(BuildContext context, String title) {
+    return showModalBottomSheet<CityRegion>(
+      context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
+      builder: (_) => _CityPickerSheet(title: title),
+    );
   }
 
   Future<void> _useCurrentLocation() async {
@@ -262,7 +337,9 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
         name = 'My Location';
       }
       if (mounted) {
-        _selectFrom(KitwePlace(name, pos.latitude, pos.longitude));
+        _selectFrom(TwamboPlace(name, pos.latitude, pos.longitude,
+            cityId: _detectedCity?.id ?? 'kitwe',
+            cityName: _detectedCity?.name ?? 'Kitwe'));
       }
     } catch (e) {
       if (mounted) {
@@ -279,6 +356,9 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
         ? mockBookings.where((b) => b.isActive && b.tripId > 0).map((b) => b.tripId).toSet()
         : <int>{};
     final unbooked = bookedIds.isEmpty ? all : all.where((t) => !bookedIds.contains(t.id)).toList();
+
+    // Hike mode: city-level filtering already handled by the API query (or mock provider)
+    if (_tripType == 'hike') return unbooked;
 
     if (_fromPlace == null && _toPlace == null) { return unbooked; }
     return unbooked.where((t) {
@@ -298,7 +378,10 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
     final user = ref.watch(authProvider).user;
     final firstName = user?.fullName.split(' ').first ?? 'Rider';
     final isDark = ref.watch(themeModeProvider) == ThemeMode.dark;
-    final bothSelected = _fromPlace != null && _toPlace != null;
+    final isHikeMode = _tripType == 'hike';
+    final bothSelected = isHikeMode
+        ? (_fromCity != null && _toCity != null)
+        : (_fromPlace != null && _toPlace != null);
     final activeRide = kUseMockData
         ? _activeRide
         : ref.watch(_activeRideApiProvider).whenData((d) => d).value;
@@ -307,7 +390,9 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
       backgroundColor: isDark ? const Color(0xFF0D0D0D) : TwamboColors.bg,
       resizeToAvoidBottomInset: false,
       bottomNavigationBar: const RiderNavBar(currentIndex: 0),
-      body: LayoutBuilder(builder: (context, constraints) {
+      body: SafeArea(
+        bottom: false,
+        child: LayoutBuilder(builder: (context, constraints) {
         final bodyH = constraints.maxHeight;
         return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -321,17 +406,47 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
             ),
           ),
 
-          // ── FROM / TO tappable chips ──────────────────────────────────
-          _RouteSearchCard(
-            fromPlace: _fromPlace, toPlace: _toPlace,
-            onFromTap: _openFromPicker, onToTap: _openToPicker,
-            onClearFrom: () => setState(() => _fromPlace = null),
-            onClearTo:   () => setState(() => _toPlace = null),
-            onMapFrom: () => _openMapPicker(true),
-            onMapTo:   () => _openMapPicker(false),
-            onSwap: _swap,
-            onUseMyLocation: _useCurrentLocation,
+          // ── Trip type selector ────────────────────────────────────────
+          _TripTypeSelector(
+            selected: _tripType,
+            isDark: isDark,
+            onSelect: (t) => setState(() {
+              _tripType = t;
+              _fromPlace = null;
+              _toPlace = null;
+              _fromCity = null;
+              _toCity = null;
+            }),
           ),
+
+          // ── Route picker (city trips = place picker, hike = city picker) ─
+          if (isHikeMode)
+            _CityRouteCard(
+              fromCity: _fromCity, toCity: _toCity,
+              isDark: isDark,
+              onFromTap: () async {
+                final city = await _openCityPicker(context, 'FROM CITY');
+                if (city != null && mounted) setState(() { _fromCity = city; });
+              },
+              onToTap: () async {
+                final city = await _openCityPicker(context, 'TO CITY');
+                if (city != null && mounted) setState(() { _toCity = city; });
+              },
+              onClearFrom: () => setState(() => _fromCity = null),
+              onClearTo:   () => setState(() => _toCity = null),
+              onSwap: () => setState(() { final t = _fromCity; _fromCity = _toCity; _toCity = t; }),
+            )
+          else
+            _RouteSearchCard(
+              fromPlace: _fromPlace, toPlace: _toPlace,
+              onFromTap: _openFromPicker, onToTap: _openToPicker,
+              onClearFrom: () => setState(() => _fromPlace = null),
+              onClearTo:   () => setState(() => _toPlace = null),
+              onMapFrom: () => _openMapPicker(true),
+              onMapTo:   () => _openMapPicker(false),
+              onSwap: _swap,
+              onUseMyLocation: _useCurrentLocation,
+            ),
 
           // ── Active ride card (between search and available rides) ─────
           if (activeRide != null) ...[
@@ -352,9 +467,11 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
             padding: const EdgeInsets.fromLTRB(16, 14, 12, 8),
             child: Row(children: [
               Expanded(child: Text(
-                bothSelected
-                    ? '${_fromPlace!.name.split(',').first} → ${_toPlace!.name.split(',').first}'
-                    : 'Available Rides',
+                isHikeMode && bothSelected
+                    ? '${_fromCity!.name} → ${_toCity!.name}'
+                    : bothSelected
+                        ? '${_fromPlace!.name.split(',').first} → ${_toPlace!.name.split(',').first}'
+                        : (isHikeMode ? 'Long Distance Rides' : 'City Rides'),
                 style: GoogleFonts.spaceGrotesk(
                   fontSize: 14, fontWeight: FontWeight.w800,
                   color: isDark ? Colors.white : TwamboColors.textPrimary,
@@ -401,7 +518,7 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
               data: (allTrips) {
                 final trips = _filterTrips(allTrips);
                 return CustomScrollView(slivers: [
-                  if (bothSelected)
+                  if (!isHikeMode && bothSelected)
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -418,7 +535,7 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
                       ),
                     ),
                   if (trips.isEmpty)
-                    const SliverFillRemaining(child: _EmptyTrips())
+                    SliverFillRemaining(child: _EmptyTrips(tripType: _tripType))
                   else if (_isGrid)
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
@@ -453,6 +570,7 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
         ],
         );
       }),
+      ),
     );
   }
 }
@@ -506,7 +624,6 @@ class _ActiveRideCardState extends State<_ActiveRideCard> {
     final isDark = widget.isDark;
     final bg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
     final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
-    final passengers = info.passengers;
     final seatsLeft = trip.availableSeats;
 
     return Container(
@@ -681,10 +798,8 @@ class _HeroZone extends StatelessWidget {
         ),
 
         // Content row
-        SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 12, 8, 12),
+        Padding(
+            padding: const EdgeInsets.fromLTRB(18, 8, 8, 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -723,7 +838,6 @@ class _HeroZone extends StatelessWidget {
               ],
             ),
           ),
-        ),
       ],
     );
   }
@@ -867,7 +981,7 @@ class _ApiSlideCard extends StatelessWidget {
 // ── Route search card ─────────────────────────────────────────────────────────
 
 class _RouteSearchCard extends StatelessWidget {
-  final KitwePlace? fromPlace, toPlace;
+  final TwamboPlace? fromPlace, toPlace;
   final VoidCallback onFromTap, onToTap;
   final VoidCallback onClearFrom, onClearTo;
   final VoidCallback onMapFrom, onMapTo, onSwap;
@@ -891,7 +1005,7 @@ class _RouteSearchCard extends StatelessWidget {
 
     Widget fieldRow({
       required bool isFrom,
-      required KitwePlace? place,
+      required TwamboPlace? place,
       required VoidCallback onTap,
       required VoidCallback onClear,
       required VoidCallback onMap,
@@ -986,7 +1100,14 @@ class _RouteSearchCard extends StatelessWidget {
 class _PlacePickerSheet extends StatefulWidget {
   final String title;
   final String initial;
-  const _PlacePickerSheet({required this.title, this.initial = ''});
+  final List<TwamboPlace> places;
+  final String cityName;
+  const _PlacePickerSheet({
+    required this.title,
+    this.initial = '',
+    this.places = const [],
+    this.cityName = 'Kitwe',
+  });
   @override
   State<_PlacePickerSheet> createState() => _PlacePickerSheetState();
 }
@@ -1000,7 +1121,7 @@ class _PlacePickerSheetState extends State<_PlacePickerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final results = searchPlaces(_ctrl.text);
+    final results = searchCityPlaces(_ctrl.text, widget.places);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg     = isDark ? const Color(0xFF1A1A1A) : Colors.white;
     final cardBg = isDark ? const Color(0xFF2A2A2A) : TwamboColors.surfaceAlt;
@@ -1061,7 +1182,7 @@ class _PlacePickerSheetState extends State<_PlacePickerSheet> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
           child: Text(
-            _ctrl.text.isEmpty ? 'POPULAR IN KITWE' : 'RESULTS',
+            _ctrl.text.isEmpty ? 'POPULAR IN ${widget.cityName.toUpperCase()}' : 'RESULTS',
             style: GoogleFonts.spaceGrotesk(fontSize: 8, fontWeight: FontWeight.w800,
                 color: TwamboColors.textSecondary, letterSpacing: 2),
           ),
@@ -1111,7 +1232,7 @@ class _PlacePickerSheetState extends State<_PlacePickerSheet> {
 // ── Request ride card ─────────────────────────────────────────────────────────
 
 class _RequestRideCard extends StatelessWidget {
-  final KitwePlace from, to;
+  final TwamboPlace from, to;
   final VoidCallback onTap;
   const _RequestRideCard({required this.from, required this.to, required this.onTap});
 
@@ -1276,13 +1397,17 @@ class _TripGridCardState extends State<_TripGridCard> with SingleTickerProviderS
     final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
     final divColor = isDark ? const Color(0xFF2E2E2E) : TwamboColors.line;
 
+    final bookingClosed = !trip.bookingWindowOpen;
+
     return InkWell(
-      onTap: () => _showBoardingSheet(context, trip),
-      child: Container(
+      onTap: bookingClosed ? null : () => _showBoardingSheet(context, trip),
+      child: Opacity(
+        opacity: bookingClosed ? 0.55 : 1.0,
+        child: Container(
         decoration: BoxDecoration(
           color: cardBg,
           border: Border(left: BorderSide(
-              color: trip.isActive ? TwamboColors.success : (ok ? TwamboColors.primary : divColor),
+              color: bookingClosed ? divColor : (trip.isActive ? TwamboColors.success : (ok ? TwamboColors.primary : divColor)),
               width: 3)),
           boxShadow: isDark ? null : [BoxShadow(color: TwamboColors.primary.withValues(alpha: 0.08), blurRadius: 8, offset: const Offset(0, 3))],
         ),
@@ -1290,9 +1415,32 @@ class _TripGridCardState extends State<_TripGridCard> with SingleTickerProviderS
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           trip.isActive
               ? const _LiveBadge()
-              : Text('${trip.mode.toUpperCase()} · ${_fmt(trip.departureTime)}',
-                  style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w700,
-                      color: TwamboColors.primary, letterSpacing: 1.2)),
+              : Row(children: [
+                  Text('${trip.mode.toUpperCase()} · ${_fmt(trip.departureTime)}',
+                      style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w700,
+                          color: bookingClosed ? TwamboColors.textSecondary : TwamboColors.primary, letterSpacing: 1.2)),
+                  const SizedBox(width: 5),
+                  if (bookingClosed)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                      color: TwamboColors.textSecondary.withValues(alpha: 0.12),
+                      child: Text('CLOSED', style: GoogleFonts.spaceGrotesk(
+                          fontSize: 7, fontWeight: FontWeight.w800,
+                          color: TwamboColors.textSecondary, letterSpacing: 0.8)),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                      color: trip.isHike
+                          ? const Color(0xFFE65100).withValues(alpha: 0.12)
+                          : TwamboColors.primary.withValues(alpha: 0.10),
+                      child: Text(trip.isHike ? 'LONG' : 'CITY',
+                          style: GoogleFonts.spaceGrotesk(
+                              fontSize: 7, fontWeight: FontWeight.w800,
+                              color: trip.isHike ? const Color(0xFFE65100) : TwamboColors.primary,
+                              letterSpacing: 0.8)),
+                    ),
+                ]),
           const SizedBox(height: 4),
           Text('K${trip.currentSharedFare.toStringAsFixed(0)}',
               style: GoogleFonts.spaceGrotesk(fontSize: 26, fontWeight: FontWeight.w800,
@@ -1345,7 +1493,7 @@ class _TripGridCardState extends State<_TripGridCard> with SingleTickerProviderS
                 fontSize: 11, fontWeight: FontWeight.w800,
                 color: ok ? TwamboColors.success : TwamboColors.error)),
             const Spacer(),
-            if (ok)
+            if (ok && !bookingClosed)
               Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   color: trip.isActive ? TwamboColors.success : TwamboColors.primary,
                   child: Text(trip.isActive ? 'JOIN' : 'BOOK', style: GoogleFonts.spaceGrotesk(
@@ -1353,6 +1501,7 @@ class _TripGridCardState extends State<_TripGridCard> with SingleTickerProviderS
                       letterSpacing: 1, color: TwamboColors.textPrimary))),
           ]),
         ]),
+      ),
       ),
     );
   }
@@ -1370,18 +1519,21 @@ class _TripListCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ok = trip.availableSeats > 0;
+    final bookingClosed = !trip.bookingWindowOpen;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
     final divColor = isDark ? const Color(0xFF2E2E2E) : TwamboColors.line;
 
-    return InkWell(
-      onTap: () => _showBoardingSheet(context, trip),
+    return Opacity(
+      opacity: bookingClosed ? 0.55 : 1.0,
+      child: InkWell(
+      onTap: bookingClosed ? null : () => _showBoardingSheet(context, trip),
       child: Container(
         decoration: BoxDecoration(
           color: cardBg,
           border: Border(left: BorderSide(
-              color: trip.isActive ? TwamboColors.success : (ok ? TwamboColors.primary : divColor),
+              color: bookingClosed ? divColor : (trip.isActive ? TwamboColors.success : (ok ? TwamboColors.primary : divColor)),
               width: 3)),
           boxShadow: isDark ? null : [BoxShadow(color: TwamboColors.primary.withValues(alpha: 0.07), blurRadius: 8, offset: const Offset(0, 3))],
         ),
@@ -1400,9 +1552,24 @@ class _TripListCard extends StatelessWidget {
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             trip.isActive
                 ? const _LiveBadge()
-                : Text('${trip.mode.toUpperCase()} · ${_fmt(trip.departureTime)}',
-                    style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w700,
-                        color: TwamboColors.primary, letterSpacing: 1.2)),
+                : Row(children: [
+                    Flexible(child: Text('${trip.mode.toUpperCase()} · ${_fmt(trip.departureTime)}',
+                        style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w700,
+                            color: TwamboColors.primary, letterSpacing: 1.2),
+                        overflow: TextOverflow.ellipsis)),
+                    const SizedBox(width: 5),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                      color: trip.isHike
+                          ? const Color(0xFFE65100).withValues(alpha: 0.12)
+                          : TwamboColors.primary.withValues(alpha: 0.10),
+                      child: Text(trip.isHike ? 'LONG DIST' : 'CITY',
+                          style: GoogleFonts.spaceGrotesk(
+                              fontSize: 7, fontWeight: FontWeight.w800,
+                              color: trip.isHike ? const Color(0xFFE65100) : TwamboColors.primary,
+                              letterSpacing: 0.8)),
+                    ),
+                  ]),
             const SizedBox(height: 3),
             Text(_short(trip.originName),
                 style: GoogleFonts.spaceGrotesk(fontSize: 13, fontWeight: FontWeight.w700,
@@ -1432,7 +1599,13 @@ class _TripListCard extends StatelessWidget {
                 style: GoogleFonts.spaceGrotesk(fontSize: 22, fontWeight: FontWeight.w800,
                     color: textColor)),
             const SizedBox(height: 4),
-            if (ok && trip.bookingWindowOpen)
+            if (bookingClosed)
+              Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  color: TwamboColors.textSecondary.withValues(alpha: 0.12),
+                  child: Text('CLOSED', style: GoogleFonts.spaceGrotesk(
+                      fontSize: 9, fontWeight: FontWeight.w800,
+                      letterSpacing: 1.5, color: TwamboColors.textSecondary)))
+            else if (ok)
               Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   color: trip.isActive ? TwamboColors.success : TwamboColors.primary,
                   child: Text(trip.isActive ? 'JOIN' : 'BOOK', style: GoogleFonts.spaceGrotesk(
@@ -1441,6 +1614,7 @@ class _TripListCard extends StatelessWidget {
           ]),
         ]),
       ),
+      ),
     );
   }
 
@@ -1448,24 +1622,367 @@ class _TripListCard extends StatelessWidget {
   String _fmt(DateTime dt) => '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
 }
 
+// ── City route card (long distance) ──────────────────────────────────────────
+
+class _CityRouteCard extends StatelessWidget {
+  final CityRegion? fromCity;
+  final CityRegion? toCity;
+  final bool isDark;
+  final VoidCallback onFromTap;
+  final VoidCallback onToTap;
+  final VoidCallback onClearFrom;
+  final VoidCallback onClearTo;
+  final VoidCallback onSwap;
+
+  const _CityRouteCard({
+    required this.fromCity, required this.toCity,
+    required this.isDark, required this.onFromTap, required this.onToTap,
+    required this.onClearFrom, required this.onClearTo, required this.onSwap,
+  });
+
+  static const _hikeOrange = Color(0xFFE65100);
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
+    final divColor = isDark ? const Color(0xFF2A2A2A) : TwamboColors.line;
+
+    Widget row({
+      required bool isFrom,
+      required CityRegion? city,
+      required VoidCallback onTap,
+      required VoidCallback onClear,
+    }) {
+      final label = isFrom ? 'FROM' : 'TO';
+      final hint  = isFrom ? 'Departure city…' : 'Destination city…';
+
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: SizedBox(
+          height: 52,
+          child: Row(children: [
+            const SizedBox(width: 12),
+            Icon(isFrom ? Icons.my_location_rounded : Icons.location_on_rounded,
+                size: 16, color: _hikeOrange),
+            const SizedBox(width: 8),
+            Text(label, style: GoogleFonts.spaceGrotesk(
+                fontSize: 8, fontWeight: FontWeight.w800,
+                color: _hikeOrange, letterSpacing: 1.5)),
+            const SizedBox(width: 8),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center, children: [
+              Text(
+                city?.name ?? hint,
+                style: GoogleFonts.spaceGrotesk(
+                    fontSize: 14, fontWeight: FontWeight.w700,
+                    color: city != null ? textColor : TwamboColors.textSecondary),
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+              ),
+              if (city != null)
+                Text(city.province, style: GoogleFonts.manrope(
+                    fontSize: 10, color: TwamboColors.textSecondary)),
+            ])),
+            if (city != null)
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onClear,
+                child: const SizedBox(width: 44, height: 52,
+                    child: Icon(Icons.close_rounded, size: 14, color: TwamboColors.textSecondary)),
+              ),
+          ]),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: bg,
+        border: const Border(left: BorderSide(color: _hikeOrange, width: 4)),
+        boxShadow: isDark ? null : [BoxShadow(
+            color: _hikeOrange.withValues(alpha: 0.08),
+            blurRadius: 10, offset: const Offset(0, 3))],
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        row(isFrom: true,  city: fromCity, onTap: onFromTap, onClear: onClearFrom),
+        Stack(alignment: Alignment.center, children: [
+          Container(height: 1, color: divColor),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onSwap,
+            child: Container(
+              width: 28, height: 28,
+              decoration: BoxDecoration(color: bg, shape: BoxShape.circle,
+                  border: Border.all(color: divColor)),
+              child: const Icon(Icons.swap_vert_rounded, size: 14, color: TwamboColors.textSecondary),
+            ),
+          ),
+        ]),
+        row(isFrom: false, city: toCity,   onTap: onToTap,   onClear: onClearTo),
+      ]),
+    );
+  }
+}
+
+// ── City picker sheet (long distance — by province) ───────────────────────────
+
+class _CityPickerSheet extends StatelessWidget {
+  final String title;
+  const _CityPickerSheet({required this.title});
+
+  static const _hikeOrange = Color(0xFFE65100);
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg     = isDark ? const Color(0xFF1A1A1A) : Colors.white;
+    final cardBg = isDark ? const Color(0xFF2A2A2A) : TwamboColors.surfaceAlt;
+    final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
+    final byProvince = intercityCitiesByProvince;
+    final comingSoon = comingSoonCitiesByProvince;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.70,
+      decoration: BoxDecoration(
+        color: bg,
+        border: const Border(left: BorderSide(color: _hikeOrange, width: 4)),
+      ),
+      child: Column(children: [
+        // Title row
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 18, 12, 12),
+          child: Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              color: _hikeOrange,
+              child: Text('LONG DISTANCE', style: GoogleFonts.spaceGrotesk(
+                  fontSize: 8, fontWeight: FontWeight.w800,
+                  color: Colors.white, letterSpacing: 1.5)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: Text(title, style: GoogleFonts.spaceGrotesk(
+                fontSize: 13, fontWeight: FontWeight.w800, color: textColor, letterSpacing: 1))),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => Navigator.pop(context),
+              child: const Padding(padding: EdgeInsets.all(8),
+                  child: Icon(Icons.close_rounded, size: 20, color: TwamboColors.textSecondary)),
+            ),
+          ]),
+        ),
+        // Province-grouped list
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+            children: [
+              ...byProvince.entries.map((e) {
+              return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(e.key.toUpperCase(), style: GoogleFonts.spaceGrotesk(
+                      fontSize: 8, fontWeight: FontWeight.w800,
+                      color: TwamboColors.textSecondary, letterSpacing: 2)),
+                ),
+                ...e.value.map((city) => GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => Navigator.pop(context, city),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                      border: const Border(left: BorderSide(color: _hikeOrange, width: 3)),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    child: Row(children: [
+                      Container(width: 32, height: 32,
+                          color: cardBg,
+                          child: const Icon(Icons.route_rounded, size: 16, color: _hikeOrange)),
+                      const SizedBox(width: 12),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(city.name, style: GoogleFonts.spaceGrotesk(
+                            fontSize: 14, fontWeight: FontWeight.w700, color: textColor)),
+                        Text(city.province, style: GoogleFonts.manrope(
+                            fontSize: 10, color: TwamboColors.textSecondary)),
+                      ])),
+                      const Icon(Icons.north_east_rounded, size: 14, color: TwamboColors.textSecondary),
+                    ]),
+                  ),
+                )),
+              ]);
+            }),
+              // ── Coming soon provinces ───────────────────────────────────────
+              if (comingSoon.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Divider(height: 1),
+                const SizedBox(height: 12),
+                ...comingSoon.entries.map((e) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Row(children: [
+                        Text(e.key.toUpperCase(), style: GoogleFonts.spaceGrotesk(
+                            fontSize: 8, fontWeight: FontWeight.w800,
+                            color: TwamboColors.textSecondary.withValues(alpha: 0.4), letterSpacing: 2)),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          color: TwamboColors.textSecondary.withValues(alpha: 0.12),
+                          child: Text('COMING SOON', style: GoogleFonts.spaceGrotesk(
+                              fontSize: 7, fontWeight: FontWeight.w700,
+                              color: TwamboColors.textSecondary, letterSpacing: 1.5)),
+                        ),
+                      ]),
+                    ),
+                    ...e.value.map((city) => Opacity(
+                      opacity: 0.35,
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        decoration: BoxDecoration(
+                          color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                          border: Border(left: BorderSide(color: TwamboColors.textSecondary.withValues(alpha: 0.3), width: 3)),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        child: Row(children: [
+                          Container(width: 32, height: 32,
+                              color: cardBg,
+                              child: const Icon(Icons.route_rounded, size: 16, color: TwamboColors.textSecondary)),
+                          const SizedBox(width: 12),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(city.name, style: GoogleFonts.spaceGrotesk(
+                                fontSize: 14, fontWeight: FontWeight.w700, color: textColor)),
+                            Text('Routes launching soon', style: GoogleFonts.manrope(
+                                fontSize: 10, color: TwamboColors.textSecondary)),
+                          ])),
+                          const Icon(Icons.lock_clock_outlined, size: 14, color: TwamboColors.textSecondary),
+                        ]),
+                      ),
+                    )),
+                  ],
+                )),
+              ],
+            ],
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Trip type selector ────────────────────────────────────────────────────────
+
+class _TripTypeSelector extends StatelessWidget {
+  final String selected;
+  final bool isDark;
+  final ValueChanged<String> onSelect;
+  const _TripTypeSelector({required this.selected, required this.isDark, required this.onSelect});
+
+  static const _hikeOrange = Color(0xFFE65100);
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
+    final inactiveBg = isDark ? const Color(0xFF2A2A2A) : TwamboColors.surfaceAlt;
+    final inactiveText = TwamboColors.textSecondary;
+
+    return Container(
+      color: bg,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Row(children: [
+        Expanded(child: _TypeTab(
+          label: 'CITY TRIPS',
+          icon: Icons.location_city_rounded,
+          active: selected == 'city',
+          activeColor: TwamboColors.primary,
+          activeBg: TwamboColors.primary,
+          inactiveBg: inactiveBg,
+          inactiveText: inactiveText,
+          onTap: () => onSelect('city'),
+        )),
+        const SizedBox(width: 8),
+        Expanded(child: _TypeTab(
+          label: 'LONG DISTANCE',
+          icon: Icons.route_rounded,
+          active: selected == 'hike',
+          activeColor: _hikeOrange,
+          activeBg: _hikeOrange,
+          inactiveBg: inactiveBg,
+          inactiveText: inactiveText,
+          onTap: () => onSelect('hike'),
+        )),
+      ]),
+    );
+  }
+}
+
+class _TypeTab extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool active;
+  final Color activeColor;
+  final Color activeBg;
+  final Color inactiveBg;
+  final Color inactiveText;
+  final VoidCallback onTap;
+
+  const _TypeTab({
+    required this.label, required this.icon, required this.active,
+    required this.activeColor, required this.activeBg,
+    required this.inactiveBg, required this.inactiveText, required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        height: 42,
+        decoration: BoxDecoration(
+          color: active ? activeBg : inactiveBg,
+          border: active
+              ? Border.all(color: activeColor, width: 0)
+              : Border.all(color: Colors.transparent, width: 0),
+        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(icon, size: 14, color: active ? Colors.white : inactiveText),
+          const SizedBox(width: 6),
+          Text(label, style: GoogleFonts.spaceGrotesk(
+              fontSize: 9, fontWeight: FontWeight.w800,
+              color: active ? Colors.white : inactiveText,
+              letterSpacing: 1.2)),
+        ]),
+      ),
+    );
+  }
+}
+
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 class _EmptyTrips extends StatelessWidget {
-  const _EmptyTrips();
+  final String tripType;
+  const _EmptyTrips({this.tripType = 'city'});
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final boxBg = isDark ? const Color(0xFF1E1E1E) : TwamboColors.surfaceAlt;
+    final isHike = tripType == 'hike';
+    final accent = isHike ? const Color(0xFFE65100) : TwamboColors.primary;
     return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
       Container(width: 48, height: 48,
           decoration: BoxDecoration(color: boxBg,
-              border: const Border(left: BorderSide(color: TwamboColors.primary, width: 3))),
-          child: const Icon(Icons.directions_car_outlined, size: 24, color: TwamboColors.textSecondary)),
+              border: Border(left: BorderSide(color: accent, width: 3))),
+          child: Icon(isHike ? Icons.route_rounded : Icons.directions_car_outlined,
+              size: 24, color: TwamboColors.textSecondary)),
       const SizedBox(height: 10),
-      Text('NO RIDES AVAILABLE', style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w700,
+      Text(isHike ? 'NO LONG DISTANCE TRIPS' : 'NO CITY RIDES',
+          style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w700,
           color: TwamboColors.textSecondary, letterSpacing: 2)),
       const SizedBox(height: 3),
-      Text('Check back soon or try a different route',
+      Text(isHike
+          ? 'No intercity trips available right now'
+          : 'Check back soon or try a different route',
           style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.textSecondary)),
     ]));
   }
@@ -1534,7 +2051,8 @@ class _RoutePainter extends CustomPainter {
 
 class _MapPickerSheet extends StatefulWidget {
   final String title;
-  const _MapPickerSheet({required this.title});
+  final List<TwamboPlace> places;
+  const _MapPickerSheet({required this.title, this.places = const []});
   @override
   State<_MapPickerSheet> createState() => _MapPickerSheetState();
 }
@@ -1550,20 +2068,19 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
     super.dispose();
   }
 
-  // Fast fallback while panning — uses our expanded local list
+  // Fast fallback while panning — uses the city place list
   String _nearestName(double lat, double lng) {
-    KitwePlace? nearest;
+    TwamboPlace? nearest;
     double minDist = double.infinity;
-    for (final p in kitwePlaces) {
+    for (final p in widget.places) {
       final d = haversineKm(lat, lng, p.lat, p.lng);
       if (d < minDist) { minDist = d; nearest = p; }
     }
-    if (nearest == null) { return 'Pinned location'; }
-    if (minDist < 0.5) { return nearest.name; }
-    if (minDist < 2.0) { return '${nearest.name} area'; }
+    if (nearest == null) return 'Pinned location';
+    if (minDist < 0.5) return nearest.name;
+    if (minDist < 2.0) return '${nearest.name} area';
     return 'Pinned location';
   }
-
 
   Future<void> _confirm() async {
     setState(() => _confirming = true);
@@ -1575,7 +2092,7 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
     }
     final name = _nearestName(pos.latitude, pos.longitude);
     if (mounted) {
-      Navigator.pop(context, KitwePlace(name, pos.latitude, pos.longitude));
+      Navigator.pop(context, TwamboPlace(name, pos.latitude, pos.longitude));
     }
   }
 
@@ -1688,17 +2205,21 @@ class _MapPickerSheetState extends State<_MapPickerSheet> {
 // ── Boarding sheet ────────────────────────────────────────────────────────────
 
 class _BoardingData {
-  final KitwePlace pickup;
-  final KitwePlace? dropoff;
+  final TwamboPlace pickup;
+  final TwamboPlace? dropoff;
   const _BoardingData(this.pickup, [this.dropoff]);
 }
 
 Future<void> _showBoardingSheet(BuildContext context, Trip trip) async {
+  final surcharge = ProviderScope.containerOf(context)
+      .read(authProvider).user?.fareSurchargePct ?? 0;
+  final cityId = detectCity(trip.originLat, trip.originLng)?.id ?? 'kitwe';
+  final cityPlaces = placesForCity(cityId);
   final data = await showModalBottomSheet<_BoardingData>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => _BoardingSheet(trip: trip),
+    builder: (_) => _BoardingSheet(trip: trip, surcharge: surcharge, cityPlaces: cityPlaces),
   );
   if (data != null && context.mounted) {
     var url = '/trip/${trip.id}'
@@ -1825,16 +2346,29 @@ class _MapLabel extends StatelessWidget {
 
 class _BoardingSheet extends StatefulWidget {
   final Trip trip;
-  const _BoardingSheet({required this.trip});
+  final int surcharge;
+  final List<TwamboPlace> cityPlaces;
+  const _BoardingSheet({required this.trip, this.surcharge = 0, this.cityPlaces = const []});
   @override
   State<_BoardingSheet> createState() => _BoardingSheetState();
 }
 
 class _BoardingSheetState extends State<_BoardingSheet> {
-  KitwePlace? _pickup;
-  KitwePlace? _dropoff;
+  TwamboPlace? _pickup;
+  TwamboPlace? _dropoff;
 
   bool get _isJoining => widget.trip.isActive;
+
+  double get _detourFee {
+    final p = _pickup;
+    if (p == null) return 0;
+    final trip = widget.trip;
+    final detourKm = haversineKm(p.lat, p.lng, trip.originLat, trip.originLng);
+    if (detourKm < 0.3) return 0;
+    const rate = 2.0;
+    final cap = trip.isHike ? 50.0 : 15.0;
+    return (detourKm * rate).clamp(0, cap);
+  }
 
   double get _segmentFare => estimateDynamicFare(
     widget.trip.originLat, widget.trip.originLng,
@@ -1845,41 +2379,48 @@ class _BoardingSheetState extends State<_BoardingSheet> {
   @override
   void initState() {
     super.initState();
-    // Pre-select trip origin as default pickup
-    _pickup = KitwePlace(widget.trip.originName, widget.trip.originLat, widget.trip.originLng);
+    _pickup = TwamboPlace(widget.trip.originName, widget.trip.originLat, widget.trip.originLng);
   }
 
   @override
   void dispose() { super.dispose(); }
 
   Future<void> _pickPickup() async {
-    final result = await showModalBottomSheet<KitwePlace>(
+    final result = await showModalBottomSheet<TwamboPlace>(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
-      builder: (_) => const _PlacePickerSheet(title: 'WHERE DO YOU WANT TO BOARD?'),
+      builder: (_) => _PlacePickerSheet(
+        title: 'WHERE DO YOU WANT TO BOARD?',
+        places: widget.cityPlaces,
+        cityName: detectCity(widget.trip.originLat, widget.trip.originLng)?.name ?? 'Kitwe',
+      ),
     );
     if (result != null && mounted) setState(() => _pickup = result);
   }
 
   Future<void> _pickPickupOnMap() async {
-    final result = await showModalBottomSheet<KitwePlace>(
+    final result = await showModalBottomSheet<TwamboPlace>(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
-      builder: (_) => _MapPickerSheet(title: 'PIN YOUR BOARDING POINT'),
+      builder: (_) => _MapPickerSheet(title: 'PIN YOUR BOARDING POINT', places: widget.cityPlaces),
     );
     if (result != null && mounted) setState(() => _pickup = result);
   }
 
   Future<void> _pickDropoff() async {
-    final result = await showModalBottomSheet<KitwePlace>(
+    final result = await showModalBottomSheet<TwamboPlace>(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
-      builder: (_) => const _PlacePickerSheet(title: 'WHERE ARE YOU GOING?'),
+      builder: (_) => _PlacePickerSheet(
+        title: 'WHERE ARE YOU GOING?',
+        places: widget.cityPlaces,
+        cityName: detectCity(widget.trip.originLat, widget.trip.originLng)?.name ?? 'Kitwe',
+      ),
     );
     if (result != null && mounted) setState(() => _dropoff = result);
   }
 
   Future<void> _pickDropoffOnMap() async {
-    final result = await showModalBottomSheet<KitwePlace>(
+    final result = await showModalBottomSheet<TwamboPlace>(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
-      builder: (_) => _MapPickerSheet(title: 'PIN YOUR DROP-OFF'),
+      builder: (_) => _MapPickerSheet(title: 'PIN YOUR DROP-OFF', places: widget.cityPlaces),
     );
     if (result != null && mounted) setState(() => _dropoff = result);
   }
@@ -1991,6 +2532,27 @@ class _BoardingSheetState extends State<_BoardingSheet> {
                 const SizedBox(height: 12),
                 Container(height: 1, color: divColor),
                 const SizedBox(height: 12),
+
+                // Strike surcharge warning
+                if (widget.surcharge > 0) ...[
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF2A1A00) : const Color(0xFFFFF3E0),
+                      border: const Border(left: BorderSide(color: TwamboColors.secondary, width: 3)),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.warning_amber_rounded, size: 14, color: TwamboColors.secondary),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(
+                        'Your fare includes a ${widget.surcharge}% conduct surcharge due to previous strikes.',
+                        style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.secondary,
+                            fontWeight: FontWeight.w600, height: 1.4),
+                      )),
+                    ]),
+                  ),
+                  const SizedBox(height: 12),
+                ],
 
                 // Boarding point
                 Text('WHERE DO YOU WANT TO BOARD?',
@@ -2112,13 +2674,37 @@ class _BoardingSheetState extends State<_BoardingSheet> {
                     ),
                   ],
 
+                  // Detour fee info — shown when pickup differs from trip origin
+                  if (_detourFee > 0) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF2A1800) : const Color(0xFFFFF3E0),
+                        border: const Border(left: BorderSide(color: Color(0xFFE65100), width: 3)),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.home_outlined, size: 14, color: Color(0xFFE65100)),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(
+                          'Home pickup detour${trip.isHike ? ' (long dist cap K50)' : ' (city cap K15)'}',
+                          style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w700,
+                              color: const Color(0xFFE65100), letterSpacing: 0.8),
+                        )),
+                        Text('+ K${_detourFee.toStringAsFixed(0)}',
+                            style: GoogleFonts.spaceGrotesk(fontSize: 16, fontWeight: FontWeight.w800,
+                                color: const Color(0xFFE65100))),
+                      ]),
+                    ),
+                  ],
+
                 const SizedBox(height: 16),
 
                 // CTA
                 if (ok)
                   GestureDetector(
                     onTap: () {
-                      final pickup = _pickup ?? KitwePlace(trip.originName, trip.originLat, trip.originLng);
+                      final pickup = _pickup ?? TwamboPlace(trip.originName, trip.originLat, trip.originLng);
                       Navigator.pop(context, _BoardingData(pickup, _dropoff));
                     },
                     child: Container(

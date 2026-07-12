@@ -10,6 +10,7 @@ import 'package:latlong2/latlong.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/endpoints.dart';
 import '../../../core/models/trip.dart';
+import '../../../dev/kitwe_places.dart' show haversineKm;
 import '../../../dev/mock_trips.dart';
 import '../../../shared/theme.dart';
 
@@ -222,7 +223,12 @@ class _TripDetailScreenState extends ConsumerState<TripDetailScreen> {
                               onTap: (i) => _onSeatTap(i, trip.availableSeats),
                             ),
                             _divider(),
-                            _FarePanel(trip: trip, selectedCount: _selected.length),
+                            _FarePanel(
+                              trip: trip,
+                              selectedCount: _selected.length,
+                              pickupLat: widget.pickupLat,
+                              pickupLng: widget.pickupLng,
+                            ),
                           ] else
                             _ClosedBanner(trip: trip),
                         ],
@@ -695,19 +701,43 @@ class _SeatTile extends StatelessWidget {
 class _FarePanel extends StatelessWidget {
   final Trip trip;
   final int selectedCount;
-  const _FarePanel({required this.trip, required this.selectedCount});
+  final double? pickupLat;
+  final double? pickupLng;
+  const _FarePanel({
+    required this.trip,
+    required this.selectedCount,
+    this.pickupLat,
+    this.pickupLng,
+  });
+
+  static const _detourRate = 2.0; // K2/km — matches backend FareEngine
+  static const _detourCapCity = 15.0;
+  static const _detourCapHike = 50.0;
+
+  double _detourFee() {
+    if (pickupLat == null || pickupLng == null) return 0;
+    final detourKm = haversineKm(pickupLat!, pickupLng!, trip.originLat, trip.originLng);
+    if (detourKm < 0.3) return 0; // ignore trivially small detours
+    final cap = trip.isHike ? _detourCapHike : _detourCapCity;
+    return (detourKm * _detourRate).clamp(0, cap);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final total = trip.currentSharedFare * (selectedCount == 0 ? 1 : selectedCount);
-    final saving = (trip.privateFare / trip.totalSeats * (selectedCount == 0 ? 1 : selectedCount)) - total;
+    final seats = selectedCount == 0 ? 1 : selectedCount;
+    final fare = trip.currentSharedFare;
+    final subtotal = fare * seats;
+    final saving = (trip.privateFare / trip.totalSeats * seats) - subtotal;
+    final detour = _detourFee();
+    final grandTotal = subtotal + detour;
+    final accentColor = trip.isHike ? const Color(0xFFE65100) : TwamboColors.primary;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
       child: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: TwamboColors.surfaceAlt,
-          border: Border(left: BorderSide(color: TwamboColors.primary, width: 4)),
+          border: Border(left: BorderSide(color: accentColor, width: 4)),
         ),
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -719,28 +749,59 @@ class _FarePanel extends StatelessWidget {
             const SizedBox(height: 10),
 
             // Per seat price
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('K${trip.currentSharedFare.toStringAsFixed(0)} × ${selectedCount == 0 ? 1 : selectedCount} seat${selectedCount > 1 ? 's' : ''}',
-                    style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary)),
-                Text('K${total.toStringAsFixed(0)}',
-                    style: GoogleFonts.spaceGrotesk(fontSize: 28, fontWeight: FontWeight.w800, color: TwamboColors.textPrimary)),
-              ],
-            ),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('K${fare.toStringAsFixed(0)} × $seats seat${seats > 1 ? 's' : ''}',
+                  style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary)),
+              Text('K${subtotal.toStringAsFixed(0)}',
+                  style: GoogleFonts.spaceGrotesk(
+                      fontSize: detour > 0 ? 20 : 28,
+                      fontWeight: FontWeight.w800,
+                      color: TwamboColors.textPrimary)),
+            ]),
+
+            // Detour fee line (only shown when there's a meaningful detour)
+            if (detour > 0) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                color: const Color(0xFFE65100).withValues(alpha: 0.08),
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Home pickup detour',
+                        style: GoogleFonts.manrope(fontSize: 12,
+                            fontWeight: FontWeight.w600, color: const Color(0xFFE65100))),
+                    Text(
+                      trip.isHike ? 'Long distance cap: K${_detourCapHike.toStringAsFixed(0)}'
+                                  : 'City cap: K${_detourCapCity.toStringAsFixed(0)}',
+                      style: GoogleFonts.manrope(fontSize: 10, color: TwamboColors.textSecondary),
+                    ),
+                  ])),
+                  Text('+ K${detour.toStringAsFixed(0)}',
+                      style: GoogleFonts.spaceGrotesk(fontSize: 14, fontWeight: FontWeight.w800,
+                          color: const Color(0xFFE65100))),
+                ]),
+              ),
+              const SizedBox(height: 6),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Text('TOTAL', style: GoogleFonts.spaceGrotesk(
+                    fontSize: 10, fontWeight: FontWeight.w800,
+                    color: TwamboColors.textSecondary, letterSpacing: 1.5)),
+                Text('K${grandTotal.toStringAsFixed(0)}',
+                    style: GoogleFonts.spaceGrotesk(fontSize: 28, fontWeight: FontWeight.w800,
+                        color: TwamboColors.textPrimary)),
+              ]),
+            ],
 
             // Vs private
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Private price would be',
-                    style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.textSecondary)),
-                Text('K${trip.privateFare.toStringAsFixed(0)}',
-                    style: GoogleFonts.manrope(fontSize: 12,
-                        color: TwamboColors.textSecondary,
-                        decoration: TextDecoration.lineThrough)),
-              ],
-            ),
+            const SizedBox(height: 4),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('Private price would be',
+                  style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.textSecondary)),
+              Text('K${trip.privateFare.toStringAsFixed(0)}',
+                  style: GoogleFonts.manrope(fontSize: 12,
+                      color: TwamboColors.textSecondary,
+                      decoration: TextDecoration.lineThrough)),
+            ]),
 
             if (saving > 0) ...[
               const SizedBox(height: 6),
@@ -749,7 +810,8 @@ class _FarePanel extends StatelessWidget {
                 color: TwamboColors.success.withValues(alpha: 0.12),
                 child: Text(
                   'You save K${saving.toStringAsFixed(0)} by sharing',
-                  style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w700, color: TwamboColors.success),
+                  style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w700,
+                      color: TwamboColors.success),
                 ),
               ),
             ],
@@ -759,6 +821,9 @@ class _FarePanel extends StatelessWidget {
                 style: GoogleFonts.manrope(fontSize: 10, color: TwamboColors.textSecondary)),
             Text('* Payment is cash to driver on boarding',
                 style: GoogleFonts.manrope(fontSize: 10, color: TwamboColors.textSecondary)),
+            if (detour > 0)
+              Text('* Detour fee paid on boarding if driver picks you up at home',
+                  style: GoogleFonts.manrope(fontSize: 10, color: TwamboColors.textSecondary)),
           ],
         ),
       ),
@@ -999,16 +1064,30 @@ class _BookSheetState extends ConsumerState<_BookSheet> {
     }
   }
 
+  double _calcDetourFee() {
+    final pLat = widget.pickupLat;
+    final pLng = widget.pickupLng;
+    if (pLat == null || pLng == null) return 0;
+    final detourKm = haversineKm(pLat, pLng, widget.trip.originLat, widget.trip.originLng);
+    if (detourKm < 0.3) return 0;
+    const rate = 2.0;
+    final cap = widget.trip.isHike ? 50.0 : 15.0;
+    return (detourKm * rate).clamp(0, cap);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final total = widget.trip.currentSharedFare * widget.seatCount;
+    final subtotal = widget.trip.currentSharedFare * widget.seatCount;
+    final detour = _calcDetourFee();
+    final grandTotal = subtotal + detour;
+    final accentColor = widget.trip.isHike ? const Color(0xFFE65100) : TwamboColors.primary;
 
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
         border: Border(
-          left: BorderSide(color: TwamboColors.primary, width: 4),
-          top: BorderSide(color: TwamboColors.line),
+          left: BorderSide(color: accentColor, width: 4),
+          top: const BorderSide(color: TwamboColors.line),
         ),
       ),
       padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(context).viewInsets.bottom + 20),
@@ -1016,9 +1095,21 @@ class _BookSheetState extends ConsumerState<_BookSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('CONFIRM BOOKING',
-              style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w800,
-                  color: TwamboColors.textSecondary, letterSpacing: 2)),
+          Row(children: [
+            Text('CONFIRM BOOKING',
+                style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w800,
+                    color: TwamboColors.textSecondary, letterSpacing: 2)),
+            if (widget.trip.isHike) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                color: const Color(0xFFE65100),
+                child: Text('LONG DISTANCE', style: GoogleFonts.spaceGrotesk(
+                    fontSize: 8, fontWeight: FontWeight.w800,
+                    color: Colors.white, letterSpacing: 1.2)),
+              ),
+            ],
+          ]),
           const SizedBox(height: 12),
 
           Text('${widget.trip.originName} → ${widget.trip.destinationName}',
@@ -1031,22 +1122,54 @@ class _BookSheetState extends ConsumerState<_BookSheet> {
             Row(children: [
               const Icon(Icons.pin_drop_outlined, size: 12, color: TwamboColors.secondary),
               const SizedBox(width: 4),
-              Text('Board at: ${widget.pickupName}',
+              Expanded(child: Text('Board at: ${widget.pickupName}',
                   style: GoogleFonts.manrope(fontSize: 12, fontWeight: FontWeight.w600,
-                      color: TwamboColors.secondary)),
+                      color: TwamboColors.secondary),
+                  maxLines: 1, overflow: TextOverflow.ellipsis)),
             ]),
           ],
 
           const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
+
+          // Fare lines
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text('K${widget.trip.currentSharedFare.toStringAsFixed(0)} × ${widget.seatCount} seat${widget.seatCount > 1 ? 's' : ''}',
+                style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary)),
+            Text('K${subtotal.toStringAsFixed(0)}',
+                style: GoogleFonts.spaceGrotesk(fontSize: detour > 0 ? 18 : 26,
+                    fontWeight: FontWeight.w800, color: TwamboColors.textPrimary)),
+          ]),
+
+          if (detour > 0) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              color: const Color(0xFFE65100).withValues(alpha: 0.07),
+              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Expanded(child: Text('Home pickup detour',
+                    style: GoogleFonts.manrope(fontSize: 12, fontWeight: FontWeight.w600,
+                        color: const Color(0xFFE65100)))),
+                Text('+ K${detour.toStringAsFixed(0)}',
+                    style: GoogleFonts.spaceGrotesk(fontSize: 14, fontWeight: FontWeight.w800,
+                        color: const Color(0xFFE65100))),
+              ]),
+            ),
+            const SizedBox(height: 6),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('TOTAL (cash to driver)',
+                  style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary)),
+              Text('K${grandTotal.toStringAsFixed(0)}',
+                  style: GoogleFonts.spaceGrotesk(fontSize: 26, fontWeight: FontWeight.w800,
+                      color: TwamboColors.textPrimary)),
+            ]),
+          ] else
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
               Text('Total (cash to driver)',
                   style: GoogleFonts.manrope(fontSize: 13, color: TwamboColors.textSecondary)),
-              Text('K${total.toStringAsFixed(0)}',
-                  style: GoogleFonts.spaceGrotesk(fontSize: 26, fontWeight: FontWeight.w800, color: TwamboColors.textPrimary)),
-            ],
-          ),
+              Text('K${grandTotal.toStringAsFixed(0)}',
+                  style: GoogleFonts.spaceGrotesk(fontSize: 26, fontWeight: FontWeight.w800,
+                      color: TwamboColors.textPrimary)),
+            ]),
 
           if (_error != null) ...[
             const SizedBox(height: 8),
@@ -1058,13 +1181,13 @@ class _BookSheetState extends ConsumerState<_BookSheet> {
             onTap: _loading ? null : _confirm,
             child: Container(
               height: 52, width: double.infinity,
-              color: _loading ? TwamboColors.line : TwamboColors.primary,
+              color: _loading ? TwamboColors.line : accentColor,
               child: Center(
                 child: _loading
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: TwamboColors.textPrimary))
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                     : Text(widget.trip.isActive ? 'REQUEST TO JOIN' : 'CONFIRM — PAY CASH ON BOARDING',
                         style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w800,
-                            letterSpacing: 1, color: TwamboColors.textPrimary)),
+                            letterSpacing: 1, color: Colors.white)),
               ),
             ),
           ),

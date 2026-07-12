@@ -5,6 +5,9 @@ import 'features/auth/auth_provider.dart';
 import 'features/auth/screens/login_screen.dart';
 import 'features/auth/screens/register_screen.dart';
 import 'features/auth/screens/otp_screen.dart';
+import 'features/auth/screens/forgot_password_screen.dart';
+import 'features/auth/screens/reset_otp_screen.dart';
+import 'features/auth/screens/new_password_screen.dart';
 import 'features/rider/screens/trip_search_screen.dart';
 import 'features/rider/screens/trip_detail_screen.dart';
 import 'features/rider/screens/my_bookings_screen.dart';
@@ -25,11 +28,13 @@ import 'features/realtime/driver_gps_screen.dart';
 import 'features/realtime/rider_tracking_screen.dart';
 import 'features/driver/screens/driver_pending_screen.dart';
 import 'shared/app_providers.dart';
+import 'shared/widgets/update_gate.dart';
+import 'core/services/version_check_service.dart';
 import 'shared/theme.dart';
 
 // ── Auth-aware redirect notifier ──────────────────────────────────────────────
 
-const _publicRoutes = {'/login', '/register', '/verify-phone'};
+const _publicRoutes = {'/login', '/register', '/verify-phone', '/forgot-password', '/reset-otp', '/new-password'};
 const _driverRoutes = {
   '/driver', '/driver/create', '/driver/wallet',
   '/driver/recurring', '/driver/riders', '/driver/earnings', '/driver/profile',
@@ -104,6 +109,20 @@ final routerProvider = Provider<GoRouter>((ref) {
           role:  state.uri.queryParameters['role'] ?? 'rider',
         ),
       ),
+      GoRoute(path: '/forgot-password', builder: (_, __) => const ForgotPasswordScreen()),
+      GoRoute(
+        path: '/reset-otp',
+        builder: (_, state) => ResetOtpScreen(
+          phone: state.uri.queryParameters['phone'] ?? '',
+        ),
+      ),
+      GoRoute(
+        path: '/new-password',
+        builder: (_, state) => NewPasswordScreen(
+          phone:   state.uri.queryParameters['phone'] ?? '',
+          idToken: state.uri.queryParameters['token'] ?? '',
+        ),
+      ),
 
       // Rider
       GoRoute(path: '/search',   builder: (_, __) => const TripSearchScreen()),
@@ -137,7 +156,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Driver
       GoRoute(path: '/driver-pending',  builder: (_, __) => const DriverPendingScreen()),
       GoRoute(path: '/driver',          builder: (_, __) => const DriverHomeScreen()),
-      GoRoute(path: '/driver/create',   builder: (_, __) => const CreateTripScreen()),
+      GoRoute(path: '/driver/create',   builder: (_, state) => CreateTripScreen(initialTripType: state.extra as String?)),
       GoRoute(
         path: '/driver/trip/:id',
         builder: (_, state) => TripManageScreen(tripId: int.parse(state.pathParameters['id']!)),
@@ -179,7 +198,8 @@ final routerProvider = Provider<GoRouter>((ref) {
 // ── App root ──────────────────────────────────────────────────────────────────
 
 class TwamboApp extends ConsumerWidget {
-  const TwamboApp({super.key});
+  final VersionResult? softUpdate;
+  const TwamboApp({super.key, this.softUpdate});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -192,6 +212,7 @@ class TwamboApp extends ConsumerWidget {
       themeMode: themeMode,
       routerConfig: router,
       debugShowCheckedModeBanner: false,
+      builder: (context, child) => UpdateGate(softUpdate: softUpdate, child: child!),
     );
   }
 }

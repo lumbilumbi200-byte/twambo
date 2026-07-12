@@ -233,6 +233,25 @@ class _BookingCard extends StatelessWidget {
   final bool isDark;
   const _BookingCard({required this.booking, required this.ref, required this.isDark});
 
+  String _fmtDeparture(DateTime dt) {
+    final local = dt.toLocal();
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final h = local.hour.toString().padLeft(2, '0');
+    final m = local.minute.toString().padLeft(2, '0');
+    return '${days[local.weekday - 1]} ${local.day} ${months[local.month - 1]} · $h:$m';
+  }
+
+  String? _countdown(DateTime departure) {
+    final diff = departure.toLocal().difference(DateTime.now());
+    if (diff.isNegative) return null;
+    if (diff.inDays >= 2) return 'Departing in ${diff.inDays} days';
+    final h = diff.inHours;
+    final m = diff.inMinutes % 60;
+    if (h >= 1) return m > 0 ? 'Departing in ${h}h ${m}m' : 'Departing in ${h}h';
+    return 'Departing in ${diff.inMinutes}m';
+  }
+
   Color get _borderColor {
     switch (booking.status) {
       case 'confirmed': return TwamboColors.success;
@@ -286,14 +305,25 @@ class _BookingCard extends StatelessWidget {
       ),
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Route + status badge
+        // Route + trip type badge + status badge
         Row(children: [
           Expanded(child: Text(
             '${booking.tripOrigin} → ${booking.tripDestination}',
             style: GoogleFonts.spaceGrotesk(fontSize: 13, fontWeight: FontWeight.w800, color: textColor),
             maxLines: 1, overflow: TextOverflow.ellipsis,
           )),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            color: booking.isHike
+                ? const Color(0xFFE65100).withValues(alpha: 0.10)
+                : TwamboColors.primary.withValues(alpha: 0.08),
+            child: Text(booking.isHike ? 'LONG DIST' : 'CITY',
+                style: GoogleFonts.spaceGrotesk(fontSize: 7, fontWeight: FontWeight.w800,
+                    color: booking.isHike ? const Color(0xFFE65100) : TwamboColors.primary,
+                    letterSpacing: 0.8)),
+          ),
+          const SizedBox(width: 5),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             color: _borderColor.withValues(alpha: 0.12),
@@ -301,6 +331,23 @@ class _BookingCard extends StatelessWidget {
                 style: GoogleFonts.spaceGrotesk(fontSize: 8, fontWeight: FontWeight.w800,
                     color: _borderColor, letterSpacing: 1.5)),
           ),
+        ]),
+        const SizedBox(height: 4),
+
+        // Departure time + countdown (hike only)
+        Row(children: [
+          const Icon(Icons.access_time_rounded, size: 12, color: TwamboColors.textSecondary),
+          const SizedBox(width: 4),
+          Text(_fmtDeparture(booking.tripDeparture),
+              style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.textSecondary)),
+          if (booking.isHike && _countdown(booking.tripDeparture) != null) ...[
+            const SizedBox(width: 8),
+            const Icon(Icons.timer_outlined, size: 11, color: Color(0xFFE65100)),
+            const SizedBox(width: 3),
+            Text(_countdown(booking.tripDeparture)!,
+                style: GoogleFonts.manrope(fontSize: 11, color: const Color(0xFFE65100),
+                    fontWeight: FontWeight.w600)),
+          ],
         ]),
         const SizedBox(height: 6),
 
@@ -339,6 +386,22 @@ class _BookingCard extends StatelessWidget {
               style: GoogleFonts.manrope(fontSize: 11, color: TwamboColors.textSecondary),
               maxLines: 1, overflow: TextOverflow.ellipsis)),
         ]),
+        // For hike trips, show the driver's departure meeting point prominently
+        if (booking.isHike && booking.tripOrigin.isNotEmpty) ...[
+          const SizedBox(height: 3),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            color: const Color(0xFFE65100).withValues(alpha: 0.07),
+            child: Row(children: [
+              const Icon(Icons.departure_board_rounded, size: 12, color: Color(0xFFE65100)),
+              const SizedBox(width: 6),
+              Expanded(child: Text('Departs from: ${booking.tripOrigin}',
+                  style: GoogleFonts.manrope(fontSize: 11, fontWeight: FontWeight.w600,
+                      color: const Color(0xFFE65100)),
+                  maxLines: 2, overflow: TextOverflow.ellipsis)),
+            ]),
+          ),
+        ],
 
         // Pending hike request — broadcasting indicator
         if (isPending && booking.tripId < 0) ...[
@@ -379,9 +442,14 @@ class _BookingCard extends StatelessWidget {
 
         // Fare + action buttons
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text('K${booking.amountDue.toStringAsFixed(0)} cash',
-              style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w800,
-                  color: TwamboColors.primary)),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('K${booking.amountDue.toStringAsFixed(0)} cash',
+                style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w800,
+                    color: TwamboColors.primary)),
+            if (booking.detourFee > 0)
+              Text('incl. K${booking.detourFee.toStringAsFixed(0)} detour fee',
+                  style: GoogleFonts.manrope(fontSize: 10, color: const Color(0xFFE65100))),
+          ]),
           Row(children: [
             if (booking.isConfirmed && booking.tripId > 0)
               GestureDetector(

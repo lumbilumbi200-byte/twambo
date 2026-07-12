@@ -1,3 +1,5 @@
+// mode: how the trip is priced — shared / private / dynamic
+// tripType: where it goes — city (local) / hike (long distance intercity)
 class Trip {
   final int id;
   final int driverId;
@@ -13,6 +15,7 @@ class Trip {
   final DateTime departureTime;
   final String status;
   final String mode;
+  final String tripType;
   final int totalSeats;
   final int availableSeats;
   final int seatsTaken;
@@ -37,6 +40,7 @@ class Trip {
     required this.departureTime,
     required this.status,
     required this.mode,
+    this.tripType = 'city',
     required this.totalSeats,
     required this.availableSeats,
     required this.seatsTaken,
@@ -47,24 +51,42 @@ class Trip {
     required this.minimumRiders,
   });
 
-  bool get isShared => mode == 'shared';
-  bool get isPrivate => mode == 'private';
+  bool get isShared   => mode == 'shared';
+  bool get isPrivate  => mode == 'private';
+  bool get isDynamic  => mode == 'dynamic';
+  bool get isHike     => tripType == 'hike';
+  bool get isCityTrip => tripType == 'city';
+
   bool get isScheduled => status == 'scheduled';
-  bool get isActive => status == 'active';
+  bool get isActive    => status == 'active';
   bool get isCompleted => status == 'completed';
   bool get isCancelled => status == 'cancelled';
 
-  Trip copyWith({String? status, int? availableSeats, int? seatsTaken, bool? bookingWindowOpen}) => Trip(
-    id: id, driverId: driverId, driverName: driverName, vehicleType: vehicleType,
-    vehicleMakeModel: vehicleMakeModel, originName: originName, originLat: originLat,
-    originLng: originLng, destinationName: destinationName, destinationLat: destinationLat,
-    destinationLng: destinationLng, departureTime: departureTime,
-    status: status ?? this.status, mode: mode,
-    totalSeats: totalSeats, availableSeats: availableSeats ?? this.availableSeats,
-    seatsTaken: seatsTaken ?? this.seatsTaken, currentSharedFare: currentSharedFare,
-    privateFare: privateFare, bookingWindowOpen: bookingWindowOpen ?? this.bookingWindowOpen,
-    bookingWindowClosesAt: bookingWindowClosesAt, minimumRiders: minimumRiders,
-  );
+  Trip copyWith({
+    String? status,
+    int? availableSeats,
+    int? seatsTaken,
+    bool? bookingWindowOpen,
+    String? tripType,
+  }) =>
+      Trip(
+        id: id, driverId: driverId, driverName: driverName,
+        vehicleType: vehicleType, vehicleMakeModel: vehicleMakeModel,
+        originName: originName, originLat: originLat, originLng: originLng,
+        destinationName: destinationName, destinationLat: destinationLat,
+        destinationLng: destinationLng, departureTime: departureTime,
+        status: status ?? this.status,
+        mode: mode,
+        tripType: tripType ?? this.tripType,
+        totalSeats: totalSeats,
+        availableSeats: availableSeats ?? this.availableSeats,
+        seatsTaken: seatsTaken ?? this.seatsTaken,
+        currentSharedFare: currentSharedFare,
+        privateFare: privateFare,
+        bookingWindowOpen: bookingWindowOpen ?? this.bookingWindowOpen,
+        bookingWindowClosesAt: bookingWindowClosesAt,
+        minimumRiders: minimumRiders,
+      );
 
   factory Trip.fromJson(Map<String, dynamic> j) => Trip(
         id: j['id'],
@@ -81,6 +103,7 @@ class Trip {
         departureTime: DateTime.parse(j['departure_time']),
         status: j['status'],
         mode: j['mode'],
+        tripType: j['trip_type'] ?? 'city',
         totalSeats: j['total_seats'],
         availableSeats: j['available_seats'],
         seatsTaken: j['seats_taken'] ?? 0,

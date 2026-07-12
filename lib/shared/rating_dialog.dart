@@ -83,11 +83,13 @@ class _RatingDialogState extends State<_RatingDialog> {
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.78),
         decoration: BoxDecoration(
           color: cardBg,
           border: const Border(left: BorderSide(color: TwamboColors.primary, width: 5)),
         ),
         padding: const EdgeInsets.all(20),
+        child: SingleChildScrollView(
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(
             widget.ratingAsDriver ? 'RATE YOUR RIDER' : 'RATE YOUR DRIVER',
@@ -181,6 +183,7 @@ class _RatingDialogState extends State<_RatingDialog> {
                 style: GoogleFonts.manrope(fontSize: 12, color: TwamboColors.textSecondary))),
           ),
         ]),
+        ),
       ),
     );
   }

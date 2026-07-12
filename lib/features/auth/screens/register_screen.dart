@@ -35,14 +35,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     setState(() { _loading = true; _error = null; });
     try {
       final err = await ref.read(authProvider.notifier).register(
-            phone: _phoneCtrl.text.trim(),
+            phone: '+26${_phoneCtrl.text.trim()}',
             fullName: _nameCtrl.text.trim(),
             password: _passCtrl.text,
             role: _role,
           );
       if (!mounted) return;
       if (err == null) {
-        context.go('/verify-phone?phone=${Uri.encodeComponent(_phoneCtrl.text.trim())}&role=$_role');
+        context.go(_role == 'driver' ? '/driver-pending' : '/search');
       } else {
         setState(() => _error = err);
       }
@@ -97,6 +97,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   decoration: const InputDecoration(
                     labelText: 'Phone number',
                     prefixIcon: Icon(Icons.phone),
+                    prefixText: '+26',
                     hintText: '097X XXX XXX',
                   ),
                   onChanged: (_) => setState(() => _error = null),

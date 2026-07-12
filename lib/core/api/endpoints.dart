@@ -2,13 +2,18 @@ class Endpoints {
   static const String baseUrl = 'https://twambo.onrender.com/api/v1';
   static const String wsBase = 'wss://twambo.onrender.com';
 
+  // App version (public)
+  static const String appVersion = '/auth/app-version/';
+
   // Auth
   static const String register = '/auth/register/';
   static const String login = '/auth/login/';
   static const String tokenRefresh = '/auth/token/refresh/';
   static const String me = '/auth/me/';
   static const String fcmToken = '/auth/fcm-token/';
-  static const String verifyPhone = '/auth/verify-phone/';
+  static const String verifyPhone    = '/auth/verify-phone/';
+  static const String forgotPassword = '/auth/forgot-password/';
+  static const String resetPassword  = '/auth/reset-password/';
   static const String driverProfile = '/auth/driver/profile/';
   static const String driverDocuments = '/auth/driver/documents/';
   static const String driverOnline = '/auth/driver/online/';

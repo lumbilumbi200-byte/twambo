@@ -41,9 +41,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() { _loading = true; _error = null; });
     try {
+      final phone = '+26${_phoneCtrl.text.trim()}';
       final err = await ref
           .read(authProvider.notifier)
-          .login(_phoneCtrl.text.trim(), _passCtrl.text);
+          .login(phone, _passCtrl.text);
       if (!mounted) return;
       if (err == null) {
         final user = ref.read(authProvider).user!;
@@ -209,6 +210,7 @@ class _LoginDialog extends StatelessWidget {
                         _RetroField(
                           controller: phoneCtrl, label: 'PHONE NUMBER',
                           icon: Icons.phone_outlined, keyboardType: TextInputType.phone,
+                          prefix: '+26',
                           onChanged: onChanged,
                           validator: (v) => v == null || v.isEmpty ? 'Required' : null,
                         ),
@@ -251,7 +253,19 @@ class _LoginDialog extends StatelessWidget {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 6),
+                        Center(
+                          child: TextButton(
+                            onPressed: () => context.push('/forgot-password'),
+                            child: Text('Forgot password?',
+                              style: GoogleFonts.manrope(
+                                fontSize: 12,
+                                color: TwamboColors.accent,
+                                fontWeight: FontWeight.w600,
+                              )),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
                         InkWell(
                           onTap: () => context.go('/register'),
                           child: Container(
@@ -288,6 +302,7 @@ class _RetroField extends StatelessWidget {
   final IconData icon;
   final TextInputType keyboardType;
   final bool obscure;
+  final String? prefix;
   final VoidCallback? onToggleObscure;
   final ValueChanged<String> onChanged;
   final FormFieldValidator<String> validator;
@@ -295,7 +310,7 @@ class _RetroField extends StatelessWidget {
   const _RetroField({
     required this.controller, required this.label, required this.icon,
     this.keyboardType = TextInputType.text, this.obscure = false,
-    this.onToggleObscure, required this.onChanged, required this.validator,
+    this.prefix, this.onToggleObscure, required this.onChanged, required this.validator,
   });
 
   @override
@@ -311,6 +326,8 @@ class _RetroField extends StatelessWidget {
         labelText: label,
         labelStyle: GoogleFonts.spaceGrotesk(fontSize: 10, letterSpacing: 1.4, color: TwamboColors.textSecondary),
         prefixIcon: Icon(icon, size: 17, color: TwamboColors.textSecondary),
+        prefixText: prefix,
+        prefixStyle: GoogleFonts.spaceGrotesk(fontSize: 14, fontWeight: FontWeight.w600, color: TwamboColors.textPrimary),
         suffixIcon: onToggleObscure != null
             ? IconButton(
                 icon: Icon(obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined,
