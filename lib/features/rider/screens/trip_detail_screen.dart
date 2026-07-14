@@ -196,7 +196,14 @@ class _TripDetailScreenState extends ConsumerState<TripDetailScreen> {
                 )
               : canJoin
                   ? _JoinButton(onTap: () => _joinActive(context, trip))
-                  : null,
+                  : trip.isActive
+                      ? _TrackButton(onTap: () => context.go(
+                          '/tracking/${trip.id}/${trip.driverId}'
+                          '?driverName=${Uri.encodeComponent(trip.driverName)}'
+                          '&originName=${Uri.encodeComponent(widget.pickupName ?? trip.originName)}'
+                          '&pickupLat=${widget.pickupLat ?? 0}&pickupLng=${widget.pickupLng ?? 0}',
+                        ))
+                      : null,
           body: Stack(
             children: [
               Column(
@@ -919,6 +926,38 @@ class _JoinButton extends StatelessWidget {
                 Text('JOIN THIS RIDE', style: GoogleFonts.spaceGrotesk(
                     fontSize: 13, fontWeight: FontWeight.w800,
                     color: Colors.white, letterSpacing: 1)),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Track button (shown when rider already booked and trip is active) ─────────
+
+class _TrackButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _TrackButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            height: 52,
+            color: TwamboColors.secondary,
+            child: Center(
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.my_location, size: 16, color: Colors.white),
+                const SizedBox(width: 8),
+                Text('TRACK DRIVER LIVE',
+                    style: GoogleFonts.spaceGrotesk(fontSize: 12, fontWeight: FontWeight.w800,
+                        color: Colors.white, letterSpacing: 1.5)),
               ]),
             ),
           ),

@@ -515,7 +515,20 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen>
                 cancelMockBooking(activeRide.booking.id);
                 ref.invalidate(tripSearchProvider(_searchKey));
               },
-              onManage: () => context.go('/bookings'),
+              onManage: () {
+                final trip = activeRide.trip;
+                final booking = activeRide.booking;
+                if (trip.isHike) {
+                  // Hike trips: show full trip detail (map, driver, segment fare)
+                  context.go('/trip/${trip.id}'
+                      '?pickup=${Uri.encodeComponent(booking.pickupName)}'
+                      '&pickupLat=${booking.pickupLat}&pickupLng=${booking.pickupLng}'
+                      '&dropoffName=${Uri.encodeComponent(booking.dropoffName)}'
+                      '&dropoffLat=${booking.dropoffLat}&dropoffLng=${booking.dropoffLng}');
+                } else {
+                  context.go('/bookings');
+                }
+              },
             ),
           ],
 

@@ -8,7 +8,11 @@ class Booking {
   final String driverName;
   final String driverPhone;
   final String pickupName;
+  final double pickupLat;
+  final double pickupLng;
   final String dropoffName;
+  final double dropoffLat;
+  final double dropoffLng;
   final int seatsBooked;
   final double fareAtBooking;
   final double? fareFinal;
@@ -29,7 +33,11 @@ class Booking {
     required this.driverName,
     this.driverPhone = '',
     required this.pickupName,
+    this.pickupLat = 0,
+    this.pickupLng = 0,
     required this.dropoffName,
+    this.dropoffLat = 0,
+    this.dropoffLng = 0,
     required this.seatsBooked,
     required this.fareAtBooking,
     this.fareFinal,
@@ -54,7 +62,8 @@ class Booking {
     tripOrigin: tripOrigin, tripDestination: tripDestination,
     tripDeparture: tripDeparture, driverName: driverName ?? this.driverName,
     driverPhone: driverPhone ?? this.driverPhone,
-    pickupName: pickupName, dropoffName: dropoffName,
+    pickupName: pickupName, pickupLat: pickupLat, pickupLng: pickupLng,
+    dropoffName: dropoffName, dropoffLat: dropoffLat, dropoffLng: dropoffLng,
     seatsBooked: seatsBooked, fareAtBooking: fareAtBooking,
     fareFinal: fareFinal, amountDue: amountDue, detourFee: detourFee,
     status: status ?? this.status,
@@ -71,7 +80,11 @@ class Booking {
         driverName: j['driver_name'] ?? '',
         driverPhone: j['driver_phone'] ?? '',
         pickupName: j['pickup_name'],
+        pickupLat: double.tryParse(j['pickup_lat']?.toString() ?? '') ?? 0,
+        pickupLng: double.tryParse(j['pickup_lng']?.toString() ?? '') ?? 0,
         dropoffName: j['dropoff_name'],
+        dropoffLat: double.tryParse(j['dropoff_lat']?.toString() ?? '') ?? 0,
+        dropoffLng: double.tryParse(j['dropoff_lng']?.toString() ?? '') ?? 0,
         seatsBooked: j['seats_booked'],
         fareAtBooking: double.parse(j['fare_at_booking'].toString()),
         fareFinal: j['fare_final'] != null

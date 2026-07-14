@@ -457,7 +457,7 @@ class _BookingCard extends StatelessWidget {
                   '/tracking/${booking.tripId}/${booking.driverId}'
                   '?driverName=${Uri.encodeComponent(booking.driverName)}'
                   '&originName=${Uri.encodeComponent(booking.pickupName)}'
-                  '&pickupLat=0&pickupLng=0',
+                  '&pickupLat=${booking.pickupLat}&pickupLng=${booking.pickupLng}',
                 ),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
