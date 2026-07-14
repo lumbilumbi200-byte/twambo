@@ -29,22 +29,31 @@ class _PassengerStop {
   final int bookingId;
   final String pickupName;
   final LatLng pickupPos;
+  final String dropoffName;
+  final LatLng? dropoffPos;
   final bool isPickedUp;
 
   const _PassengerStop({
     required this.bookingId, required this.pickupName,
-    required this.pickupPos, required this.isPickedUp,
+    required this.pickupPos, required this.dropoffName,
+    this.dropoffPos, required this.isPickedUp,
   });
 
-  factory _PassengerStop.fromJson(Map<String, dynamic> j) => _PassengerStop(
-    bookingId: j['id'],
-    pickupName: j['pickup_name'] ?? '',
-    pickupPos: LatLng(
-      double.parse(j['pickup_lat'].toString()),
-      double.parse(j['pickup_lng'].toString()),
-    ),
-    isPickedUp: j['is_picked_up'] as bool? ?? false,
-  );
+  factory _PassengerStop.fromJson(Map<String, dynamic> j) {
+    final dLat = double.tryParse(j['dropoff_lat']?.toString() ?? '');
+    final dLng = double.tryParse(j['dropoff_lng']?.toString() ?? '');
+    return _PassengerStop(
+      bookingId: j['id'],
+      pickupName: j['pickup_name'] ?? '',
+      pickupPos: LatLng(
+        double.parse(j['pickup_lat'].toString()),
+        double.parse(j['pickup_lng'].toString()),
+      ),
+      dropoffName: j['dropoff_name'] ?? '',
+      dropoffPos: (dLat != null && dLng != null) ? LatLng(dLat, dLng) : null,
+      isPickedUp: j['is_picked_up'] as bool? ?? false,
+    );
+  }
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -362,6 +371,32 @@ class _RiderTrackingScreenState extends ConsumerState<RiderTrackingScreen> {
                               fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white))),
                     ),
                   );
+                }),
+
+                // Other passengers' drop-off markers (orange flag — only when picked up or hike trip)
+                ..._passengers.expand((p) {
+                  final pos = p.dropoffPos;
+                  if (pos == null) return <Marker>[];
+                  // Only show drop-off if it differs meaningfully from the trip destination
+                  if (tripAsync.asData != null) {
+                    final dest = LatLng(tripAsync.asData!.value.destinationLat,
+                        tripAsync.asData!.value.destinationLng);
+                    final d = const Distance().as(LengthUnit.Meter, pos, dest);
+                    if (d < 200) return <Marker>[]; // same as destination — no extra marker
+                  }
+                  return [
+                    Marker(
+                      point: pos,
+                      width: 28, height: 28,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFFE65100).withValues(alpha: 0.85),
+                        ),
+                        child: const Icon(Icons.flag, color: Colors.white, size: 14),
+                      ),
+                    ),
+                  ];
                 }),
 
                 // My pickup (green, larger)
