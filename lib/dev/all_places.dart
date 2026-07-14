@@ -88,36 +88,36 @@ List<TwamboPlace> intercityTwamboPlaces() => [
 // Symmetric — suggestedHikeFare() looks up either direction.
 const Map<String, Map<String, double>> kRouteFares = {
   'kitwe': {
-    'ndola': 40,  'chambishi': 25,  'chingola': 45,  'chililabombwe': 65,
-    'luanshya': 30,  'solwezi': 230,  'lumwana_kalumbila': 310,
+    'ndola': 40,  'chambishi': 25,  'chingola': 45,  'chililabombwe': 100,
+    'luanshya': 30,  'solwezi': 160,  'lumwana_kalumbila': 270,
   },
   'ndola': {
     'kitwe': 40,  'chambishi': 60,  'chingola': 80,  'chililabombwe': 100,
-    'luanshya': 30,  'solwezi': 260,  'lumwana_kalumbila': 330,
+    'luanshya': 30,  'solwezi': 260,  'lumwana_kalumbila': 300,
   },
   'chingola': {
     'kitwe': 45,  'ndola': 80,  'chililabombwe': 25,  'luanshya': 70,
-    'chambishi': 35,  'solwezi': 200,  'lumwana_kalumbila': 280,
+    'chambishi': 35,  'solwezi': 115,  'lumwana_kalumbila': 260,
   },
   'chililabombwe': {
-    'kitwe': 65,  'ndola': 100,  'chingola': 25,  'luanshya': 90,
-    'chambishi': 55,  'solwezi': 210,  'lumwana_kalumbila': 290,
+    'kitwe': 100,  'ndola': 100,  'chingola': 25,  'luanshya': 90,
+    'chambishi': 55,  'solwezi': 115,  'lumwana_kalumbila': 230,
   },
   'luanshya': {
     'kitwe': 30,  'ndola': 30,  'chingola': 70,  'chililabombwe': 90,
-    'chambishi': 50,  'solwezi': 250,  'lumwana_kalumbila': 320,
+    'chambishi': 50,  'solwezi': 240,  'lumwana_kalumbila': 300,
   },
   'chambishi': {
     'kitwe': 25,  'ndola': 60,  'chingola': 35,  'chililabombwe': 55,
-    'luanshya': 50,  'solwezi': 220,  'lumwana_kalumbila': 300,
+    'luanshya': 50,  'solwezi': 130,  'lumwana_kalumbila': 255,
   },
   'solwezi': {
-    'kitwe': 230,  'ndola': 260,  'chingola': 200,  'chililabombwe': 210,
-    'luanshya': 250,  'chambishi': 220,  'lumwana_kalumbila': 100,
+    'kitwe': 160,  'ndola': 260,  'chingola': 115,  'chililabombwe': 115,
+    'luanshya': 240,  'chambishi': 130,  'lumwana_kalumbila': 76,
   },
   'lumwana_kalumbila': {
-    'kitwe': 310,  'ndola': 330,  'chingola': 280,  'chililabombwe': 290,
-    'luanshya': 320,  'chambishi': 300,  'solwezi': 100,
+    'kitwe': 270,  'ndola': 300,  'chingola': 260,  'chililabombwe': 230,
+    'luanshya': 300,  'chambishi': 255,  'solwezi': 76,
   },
 };
 
