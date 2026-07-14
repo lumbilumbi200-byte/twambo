@@ -140,6 +140,16 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
           driverName: user?.fullName ?? 'Driver',
         );
       } else {
+        final fromCityId = _origin!.cityId.isEmpty
+            ? detectCity(_origin!.lat, _origin!.lng)?.id ?? ''
+            : _origin!.cityId;
+        final toCityId = _destination!.cityId.isEmpty
+            ? detectCity(_destination!.lat, _destination!.lng)?.id ?? ''
+            : _destination!.cityId;
+        final hikeRouteFare = (_tripType == 'hike' && fromCityId.isNotEmpty && toCityId.isNotEmpty)
+            ? suggestedHikeFare(fromCityId, toCityId)
+            : null;
+
         await ApiClient.dio.post(Endpoints.driverTripCreate, data: {
           'origin_name': _origin!.name,
           'origin_lat': double.parse(_origin!.lat.toStringAsFixed(6)),
@@ -153,6 +163,7 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
           'mode': _mode,
           'trip_type': _tripType,
           if (_tripType == 'hike') 'booking_cutoff_minutes': _bookingCutoffMinutes,
+          if (hikeRouteFare != null) 'route_fare': hikeRouteFare,
         });
       }
       ref.invalidate(driverTripsProvider);

@@ -2556,16 +2556,17 @@ class _BoardingSheetState extends State<_BoardingSheet> {
   double get _segmentFare {
     final trip = widget.trip;
     if (trip.isHike) {
-      // Proportional fare: rider pays route_fare × (remaining km / full route km).
-      // Pickup at origin → full fare. Pickup at intermediate city → reduced fare.
+      // Proportional fare: rider pays route_fare × (segment km / full route km).
+      // Segment = pickup → dropoff (or trip destination if no dropoff selected).
       final p = _pickup;
       if (p == null) return trip.currentSharedFare;
       final fullDist = haversineKm(
           trip.originLat, trip.originLng, trip.destinationLat, trip.destinationLng);
       if (fullDist < 1) return trip.currentSharedFare;
-      final remainDist =
-          haversineKm(p.lat, p.lng, trip.destinationLat, trip.destinationLng);
-      final ratio = (remainDist / fullDist).clamp(0.0, 1.0);
+      final dropLat = _dropoff?.lat ?? trip.destinationLat;
+      final dropLng = _dropoff?.lng ?? trip.destinationLng;
+      final segmentDist = haversineKm(p.lat, p.lng, dropLat, dropLng);
+      final ratio = (segmentDist / fullDist).clamp(0.0, 1.0);
       // Roadside (highway waypoint) boarding gets 12% off vs a formal bus station.
       final discount = (p.cityId == 'highway') ? 0.88 : 1.0;
       final raw = trip.currentSharedFare * ratio * discount;
@@ -2585,6 +2586,11 @@ class _BoardingSheetState extends State<_BoardingSheet> {
     // Hike pass-through: use the rider's boarding city as default, not the trip origin
     _pickup = widget.defaultPickup ??
         TwamboPlace(widget.trip.originName, widget.trip.originLat, widget.trip.originLng);
+    // Hike trips: default drop-off to trip destination
+    if (widget.trip.isHike) {
+      _dropoff = TwamboPlace(
+          widget.trip.destinationName, widget.trip.destinationLat, widget.trip.destinationLng);
+    }
   }
 
   @override
@@ -2628,6 +2634,18 @@ class _BoardingSheetState extends State<_BoardingSheet> {
     final result = await showModalBottomSheet<TwamboPlace>(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
       builder: (_) => _MapPickerSheet(title: 'PIN YOUR DROP-OFF', places: widget.cityPlaces),
+    );
+    if (result != null && mounted) setState(() => _dropoff = result);
+  }
+
+  Future<void> _pickDropoffHike() async {
+    final result = await showModalBottomSheet<TwamboPlace>(
+      context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
+      builder: (_) => _PlacePickerSheet(
+        title: 'WHERE ARE YOU GETTING OFF?',
+        places: widget.cityPlaces,
+        cityName: 'ALL CITIES',
+      ),
     );
     if (result != null && mounted) setState(() => _dropoff = result);
   }
@@ -2809,8 +2827,44 @@ class _BoardingSheetState extends State<_BoardingSheet> {
                   ),
                 ]),
 
-                // ── Hike trip: fare shown based on pickup, no dropoff picker ──
+                // ── Hike trip: drop-off city picker + fare ────────────────
                 if (trip.isHike) ...[
+                  const SizedBox(height: 12),
+                  Text('WHERE ARE YOU GETTING OFF?',
+                      style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w800,
+                          color: TwamboColors.textSecondary, letterSpacing: 1.5)),
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _pickDropoffHike,
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: fillColor,
+                        border: Border(
+                          left: const BorderSide(color: TwamboColors.success, width: 3),
+                          top: BorderSide(color: divColor),
+                          bottom: BorderSide(color: divColor),
+                          right: BorderSide(color: divColor),
+                        ),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Row(children: [
+                        Icon(Icons.flag_outlined, size: 16,
+                            color: _dropoff != null ? TwamboColors.success : TwamboColors.textSecondary),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(
+                          _dropoff?.name ?? trip.destinationName,
+                          style: GoogleFonts.spaceGrotesk(
+                            fontSize: 13, fontWeight: FontWeight.w600,
+                            color: textColor,
+                          ),
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                        )),
+                        const Icon(Icons.expand_more, size: 18, color: TwamboColors.textSecondary),
+                      ]),
+                    ),
+                  ),
                   const SizedBox(height: 10),
                   Container(
                     padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -2822,9 +2876,7 @@ class _BoardingSheetState extends State<_BoardingSheet> {
                       const Icon(Icons.payments_outlined, size: 14, color: TwamboColors.success),
                       const SizedBox(width: 8),
                       Expanded(child: Text(
-                        _pickup != null && _pickup!.name != trip.originName
-                            ? 'YOUR FARE (boarding at ${_pickup!.name.split(' ').first})'
-                            : 'YOUR FARE (full route)',
+                        'YOUR SEGMENT FARE',
                         style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w700,
                             color: TwamboColors.success, letterSpacing: 0.8),
                       )),
