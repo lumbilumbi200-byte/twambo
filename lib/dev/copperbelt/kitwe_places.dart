@@ -64,6 +64,12 @@ const kitwePlaces = <KitwePlace>[
   KitwePlace('Mopani Nkana Main Gate',     -12.8115,    28.2160,    'Transport'),    // PIN (concentrator + smelter entry)
   KitwePlace('SOB Shaft Access',           -12.8360,    28.2005,    'Transport'),    // PIN (South Ore Body, underground shafts)
 
+  // ── Highway / Intercity Boarding Points ──────────────────────────────────
+  KitwePlace('Central Street Robots',      -12.8073,    28.2118,    'Transport'),    // PIN (CBD-edge boarding — long-haul minibus pickup)
+  KitwePlace('Wusakile Police Post',       -12.8483,    28.2232,    'Junction'),     // PIN (T3 Ndola Road — highway approach pickup)
+  KitwePlace('Rubis Misals Hiking Point',  -12.8114,    28.2045,    'Transport'),    // PIN (Chingola/Chambishi road departure node)
+  KitwePlace('Parklands Hub (CBU)',        -12.7893,    28.2408,    'Transport'),    // PIN (student + north Kitwe intercity pickup)
+
   // ── Road / Junctions ─────────────────────────────────────────────────────
   // Northern approach — T3 from Chingola/Chambishi; right = Chibuluma/Kalulushi, straight = CBD
   KitwePlace('T3 / Chibuluma Junction',    -12.7790,    28.2070,    'Junction'),     // PIN

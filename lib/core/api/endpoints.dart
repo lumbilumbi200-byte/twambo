@@ -46,6 +46,10 @@ class Endpoints {
   static String acceptBroadcastRequest(int id) => '/trips/driver/broadcast-requests/$id/accept/';
   static String declineBroadcastRequest(int id) => '/trips/driver/broadcast-requests/$id/decline/';
   static String joinTripRequest(int tripId) => '/trips/$tripId/join-request/';
+  static String announceDropoff(int tripId) => '/trips/driver/$tripId/announce-dropoff/';
+
+  // WebSocket
+  static String cityWs(String cityId) => '/ws/city/$cityId/';
   static String tripRideRequests(int tripId) => '/trips/driver/$tripId/requests/';
   static String closeBookingWindow(int tripId) => '/trips/driver/$tripId/close-window/';
   static String acceptRideRequest(int tripId, int requestId) => '/trips/driver/$tripId/requests/$requestId/accept/';

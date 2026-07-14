@@ -42,6 +42,10 @@ const solweziPlaces = <SolweziPlace>[
   // High-frequency town-to-mine shift runs — 05:30–07:00 and 16:30–18:00
   SolweziPlace('Kansanshi Mine Road Junction', -12.1620, 26.4035,  'Junction'),     // PIN
 
+  // ── Highway / Intercity Boarding Points ──────────────────────────────────
+  SolweziPlace('Solwezi City Mall Hub',         -12.1818,    26.3912,    'Shopping'),     // PIN (mall-area intercity boarding node)
+  SolweziPlace('Kifubwa Monument Road Gate',    -12.2210,    26.3855,    'Junction'),     // PIN (southern approach — T5 from Chingola)
+
   // ── Road / Hiking Junctions ───────────────────────────────────────────────
   // Western gate — T5 exit toward Kalumbila / Mutanda / Lumwana
   SolweziPlace('Solwezi West Gate (T5 to Kalumbila)', -12.1881252, 26.3382460, 'Junction'),  // OSM (Petroda)

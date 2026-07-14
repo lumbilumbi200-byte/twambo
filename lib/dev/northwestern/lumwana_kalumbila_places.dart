@@ -16,13 +16,15 @@ class LumwanaKalumbilaPlace {
 
 const lumwanaKalumbilaPlaces = <LumwanaKalumbilaPlace>[
   // ── Manyama Boomtown Strip (organic / informal) ───────────────────────────
-  LumwanaKalumbilaPlace('Manyama Market Hub',          -12.3147,  25.8486,  'City Centre'),  // PIN — mass-transit + retail core
+  LumwanaKalumbilaPlace('Manyama Market Hub',          -12.3147,  25.8486,  'City Centre'),  // PIN — mass-transit + retail core (original)
+  LumwanaKalumbilaPlace('Manyama Market Center',       -12.2341,  25.7915,  'Market'),       // PIN — verified 2025 ground coords (intercity boarding)
   LumwanaKalumbilaPlace('Chanamo Quarter',              -12.3110,  25.8360,  'Residential'),  // PIN — contractor guest houses / rentals
   LumwanaKalumbilaPlace('Manyama Hospital Road Jct',   -12.3210,  25.8495,  'Junction'),     // PIN — south branch to clinics + residential
 
   // ── Lumwana Corporate Estate (planned / controlled) ───────────────────────
   LumwanaKalumbilaPlace('Lumwana Estate',               -12.2880,  25.8120,  'Residential'),  // PIN — mine staff / exec housing
   LumwanaKalumbilaPlace('Lumwana MFEZ / Supplier Park', -12.2710,  25.8310,  'Transport'),    // PIN — industrial supplier zone
+  LumwanaKalumbilaPlace('Lumwana MFEZ Main Gate',       -12.2530,  25.7144,  'Transport'),    // PIN — verified 2025 main gate coords
 
   // ── Barrick Mine Gates ────────────────────────────────────────────────────
   LumwanaKalumbilaPlace('Barrick Lumwana Main Gate',    -12.2540,  25.8230,  'Transport'),    // PIN — general mine entrance
@@ -31,6 +33,7 @@ const lumwanaKalumbilaPlaces = <LumwanaKalumbilaPlace>[
 
   // ── Kalumbila / FQM Sentinel ──────────────────────────────────────────────
   LumwanaKalumbilaPlace('Kalumbila Town Centre',        -12.3410,  25.6320,  'City Centre'),  // PIN — corporate planned hub
+  LumwanaKalumbilaPlace('Kalumbila Town Square',        -12.2155,  25.3852,  'City Centre'),  // PIN — verified 2025 town square coords
   LumwanaKalumbilaPlace('FQM Sentinel Mine Gate',       -12.4010,  25.6485,  'Transport'),    // PIN — processing plant entrance
 
   // ── Kalumbila Infrastructure ──────────────────────────────────────────────

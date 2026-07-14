@@ -1,6 +1,8 @@
 ﻿import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -19,6 +21,7 @@ import '../../../dev/mock_trips.dart';
 import '../../../dev/twambo_place.dart';
 import '../../../features/auth/auth_provider.dart';
 import '../../../shared/app_providers.dart';
+import '../../../core/storage.dart';
 import '../../../shared/rider_nav_bar.dart';
 import '../../../shared/theme.dart';
 
@@ -133,6 +136,11 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen>
   CityRegion? _fromCity; // long-distance origin city
   CityRegion? _toCity;   // long-distance destination city
 
+  // City-channel WebSocket — receives seat release broadcasts from drivers
+  WebSocketChannel? _cityWs;
+  StreamSubscription? _cityWsSub;
+  Map<String, dynamic>? _pendingSeatRelease;
+
   List<TwamboPlace> get _cityPlaces =>
       placesForCity(_detectedCity?.id ?? 'kitwe');
   bool _isGrid = true;
@@ -160,7 +168,9 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen>
         _filterMinSeats,
         _filterMode,
         'hike',
-        _fromCity?.name ?? '',
+        // Don't filter by origin for hike trips — a rider in Chingola should see
+        // ALL trips headed toward their destination, including Ndola→Solwezi passing through.
+        '',
       );
     }
     return (
@@ -201,16 +211,55 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen>
       );
       final city = detectCity(pos.latitude, pos.longitude) ??
           nearestCity(pos.latitude, pos.longitude);
-      if (mounted) setState(() => _detectedCity = city);
+      if (mounted) {
+        setState(() => _detectedCity = city);
+        if (!kUseMockData) _connectCityWs(city.id);
+      }
     } catch (_) {
       // GPS unavailable — fall back to Kitwe
     }
+  }
+
+  Future<void> _connectCityWs(String cityId) async {
+    await _cityWsSub?.cancel();
+    _cityWs?.sink.close();
+    try {
+      final token = await AppStorage.getAccessToken() ?? '';
+      final uri = Uri.parse('${Endpoints.wsBase}${Endpoints.cityWs(cityId)}?token=$token');
+      _cityWs = WebSocketChannel.connect(uri);
+      _cityWsSub = _cityWs!.stream.listen(
+        (raw) {
+          if (!mounted) return;
+          try {
+            final data = jsonDecode(raw as String) as Map<String, dynamic>;
+            if (data['type'] == 'seat_release') {
+              setState(() => _pendingSeatRelease = data);
+            }
+          } catch (_) {}
+        },
+        onError: (_) {
+          // Reconnect after brief delay on error (e.g. network switch)
+          Future.delayed(const Duration(seconds: 5), () {
+            if (mounted) _connectCityWs(cityId);
+          });
+        },
+        onDone: () {
+          // Stream closed by server — reconnect
+          Future.delayed(const Duration(seconds: 5), () {
+            if (mounted) _connectCityWs(cityId);
+          });
+        },
+        cancelOnError: true,
+      );
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _activeRideTimer?.cancel();
+    _cityWsSub?.cancel();
+    _cityWs?.sink.close();
     super.dispose();
   }
 
@@ -526,6 +575,39 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen>
               data: (allTrips) {
                 final trips = _filterTrips(allTrips);
                 return CustomScrollView(slivers: [
+                  if (isHikeMode && _pendingSeatRelease != null)
+                    SliverToBoxAdapter(
+                      child: _SeatReleaseBanner(
+                        data: _pendingSeatRelease!,
+                        isDark: isDark,
+                        onDismiss: () => setState(() => _pendingSeatRelease = null),
+                        onRequest: (tripId, pickup) async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          final dest = _pendingSeatRelease?['destination'] as String? ?? '';
+                          setState(() => _pendingSeatRelease = null);
+                          try {
+                            await ApiClient.dio.post(
+                              Endpoints.joinTripRequest(tripId),
+                              data: {'pickup_name': pickup, 'dropoff_name': dest},
+                            );
+                            if (mounted) {
+                              messenger.showSnackBar(const SnackBar(
+                                content: Text('Request sent! Waiting for driver to accept.'),
+                                backgroundColor: TwamboColors.success,
+                              ));
+                            }
+                          } catch (_) {
+                            if (mounted) {
+                              messenger.showSnackBar(const SnackBar(
+                                content: Text('Could not send request. Try again.'),
+                                backgroundColor: TwamboColors.error,
+                              ));
+                            }
+                          }
+                        },
+                        fromCityName: _fromCity?.name ?? _detectedCity?.name ?? '',
+                      ),
+                    ),
                   if (!isHikeMode && bothSelected)
                     SliverToBoxAdapter(
                       child: Padding(
@@ -553,7 +635,7 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen>
                           mainAxisSpacing: 12, childAspectRatio: 0.76,
                         ),
                         delegate: SliverChildBuilderDelegate(
-                          (_, i) => _TripGridCard(trip: trips[i]),
+                          (_, i) => _TripGridCard(trip: trips[i], boardingCity: _fromCity ?? _detectedCity),
                           childCount: trips.length,
                         ),
                       ),
@@ -565,7 +647,7 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen>
                         delegate: SliverChildBuilderDelegate(
                           (_, i) => Padding(
                             padding: const EdgeInsets.only(bottom: 12),
-                            child: _TripListCard(trip: trips[i]),
+                            child: _TripListCard(trip: trips[i], boardingCity: _fromCity ?? _detectedCity),
                           ),
                           childCount: trips.length,
                         ),
@@ -1237,6 +1319,82 @@ class _PlacePickerSheetState extends State<_PlacePickerSheet> {
   }
 }
 
+// ── Seat release banner (hike tab) ───────────────────────────────────────────
+
+class _SeatReleaseBanner extends StatelessWidget {
+  final Map<String, dynamic> data;
+  final bool isDark;
+  final VoidCallback onDismiss;
+  final Future<void> Function(int tripId, String pickupCity) onRequest;
+  final String fromCityName;
+  const _SeatReleaseBanner({
+    required this.data, required this.isDark, required this.onDismiss,
+    required this.onRequest, required this.fromCityName,
+  });
+
+  static const _orange = Color(0xFFE65100);
+
+  @override
+  Widget build(BuildContext context) {
+    final tripId = data['trip_id'] as int? ?? 0;
+    final origin = data['origin'] as String? ?? '';
+    final destination = data['destination'] as String? ?? '';
+    final cityName = data['city_name'] as String? ?? '';
+    final seats = data['seats'] as int? ?? 1;
+    final fare = data['fare'] as String? ?? '';
+    final pickupCity = fromCityName.isEmpty ? cityName : fromCityName;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      child: Container(
+        decoration: BoxDecoration(
+          color: _orange,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+        child: Row(children: [
+          const Icon(Icons.airline_seat_recline_normal_rounded, color: Colors.white, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('SEAT OPENING IN $cityName'.toUpperCase(),
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 11, fontWeight: FontWeight.w800,
+                    color: Colors.white, letterSpacing: 0.8,
+                  )),
+              const SizedBox(height: 2),
+              Text('$origin → $destination · $seats seat · K$fare',
+                  style: GoogleFonts.manrope(fontSize: 12, color: Colors.white70)),
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: () => onRequest(tripId, pickupCity),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text('REQUEST SEAT FROM $pickupCity'.toUpperCase(),
+                      style: GoogleFonts.spaceGrotesk(
+                        fontSize: 10, fontWeight: FontWeight.w800,
+                        color: _orange, letterSpacing: 0.6,
+                      )),
+                ),
+              ),
+            ]),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.white70, size: 18),
+            onPressed: onDismiss,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
 // ── Request ride card ─────────────────────────────────────────────────────────
 
 class _RequestRideCard extends StatelessWidget {
@@ -1376,7 +1534,8 @@ class _LiveBadgeState extends State<_LiveBadge> with SingleTickerProviderStateMi
 
 class _TripGridCard extends StatefulWidget {
   final Trip trip;
-  const _TripGridCard({required this.trip});
+  final CityRegion? boardingCity;
+  const _TripGridCard({required this.trip, this.boardingCity});
   @override
   State<_TripGridCard> createState() => _TripGridCardState();
 }
@@ -1408,7 +1567,7 @@ class _TripGridCardState extends State<_TripGridCard> with SingleTickerProviderS
     final bookingClosed = !trip.bookingWindowOpen;
 
     return InkWell(
-      onTap: bookingClosed ? null : () => _showBoardingSheet(context, trip),
+      onTap: bookingClosed ? null : () => _showBoardingSheet(context, trip, widget.boardingCity),
       child: Opacity(
         opacity: bookingClosed ? 0.55 : 1.0,
         child: Container(
@@ -1522,7 +1681,8 @@ class _TripGridCardState extends State<_TripGridCard> with SingleTickerProviderS
 
 class _TripListCard extends StatelessWidget {
   final Trip trip;
-  const _TripListCard({required this.trip});
+  final CityRegion? boardingCity;
+  const _TripListCard({required this.trip, this.boardingCity});
 
   @override
   Widget build(BuildContext context) {
@@ -1536,7 +1696,7 @@ class _TripListCard extends StatelessWidget {
     return Opacity(
       opacity: bookingClosed ? 0.55 : 1.0,
       child: InkWell(
-      onTap: bookingClosed ? null : () => _showBoardingSheet(context, trip),
+      onTap: bookingClosed ? null : () => _showBoardingSheet(context, trip, boardingCity),
       child: Container(
         decoration: BoxDecoration(
           color: cardBg,
@@ -2218,7 +2378,7 @@ class _BoardingData {
   const _BoardingData(this.pickup, [this.dropoff]);
 }
 
-Future<void> _showBoardingSheet(BuildContext context, Trip trip) async {
+Future<void> _showBoardingSheet(BuildContext context, Trip trip, [CityRegion? boardingCity]) async {
   final surcharge = ProviderScope.containerOf(context)
       .read(authProvider).user?.fareSurchargePct ?? 0;
   // Hike trips use the full intercity place list (all cities + highway waypoints).
@@ -2226,11 +2386,22 @@ Future<void> _showBoardingSheet(BuildContext context, Trip trip) async {
   final cityPlaces = trip.isHike
       ? intercityTwamboPlaces()
       : placesForCity(detectCity(trip.originLat, trip.originLng)?.id ?? 'kitwe');
+  // For hike pass-through trips: default pickup to the rider's city, not the trip origin.
+  TwamboPlace? defaultPickup;
+  if (trip.isHike && boardingCity != null) {
+    defaultPickup = TwamboPlace(
+      boardingCity.name,
+      boardingCity.centerLat,
+      boardingCity.centerLng,
+      cityId: boardingCity.id,
+      cityName: boardingCity.name,
+    );
+  }
   final data = await showModalBottomSheet<_BoardingData>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => _BoardingSheet(trip: trip, surcharge: surcharge, cityPlaces: cityPlaces),
+    builder: (_) => _BoardingSheet(trip: trip, surcharge: surcharge, cityPlaces: cityPlaces, defaultPickup: defaultPickup),
   );
   if (data != null && context.mounted) {
     var url = '/trip/${trip.id}'
@@ -2359,7 +2530,8 @@ class _BoardingSheet extends StatefulWidget {
   final Trip trip;
   final int surcharge;
   final List<TwamboPlace> cityPlaces;
-  const _BoardingSheet({required this.trip, this.surcharge = 0, this.cityPlaces = const []});
+  final TwamboPlace? defaultPickup;
+  const _BoardingSheet({required this.trip, this.surcharge = 0, this.cityPlaces = const [], this.defaultPickup});
   @override
   State<_BoardingSheet> createState() => _BoardingSheetState();
 }
@@ -2394,7 +2566,9 @@ class _BoardingSheetState extends State<_BoardingSheet> {
       final remainDist =
           haversineKm(p.lat, p.lng, trip.destinationLat, trip.destinationLng);
       final ratio = (remainDist / fullDist).clamp(0.0, 1.0);
-      final raw = trip.currentSharedFare * ratio;
+      // Roadside (highway waypoint) boarding gets 12% off vs a formal bus station.
+      final discount = (p.cityId == 'highway') ? 0.88 : 1.0;
+      final raw = trip.currentSharedFare * ratio * discount;
       return ((raw / 5).ceil() * 5).toDouble();
     }
     // Dynamic city trip: per-rider distance-based fare.
@@ -2408,7 +2582,9 @@ class _BoardingSheetState extends State<_BoardingSheet> {
   @override
   void initState() {
     super.initState();
-    _pickup = TwamboPlace(widget.trip.originName, widget.trip.originLat, widget.trip.originLng);
+    // Hike pass-through: use the rider's boarding city as default, not the trip origin
+    _pickup = widget.defaultPickup ??
+        TwamboPlace(widget.trip.originName, widget.trip.originLat, widget.trip.originLng);
   }
 
   @override

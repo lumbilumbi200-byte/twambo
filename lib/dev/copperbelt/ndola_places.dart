@@ -17,6 +17,8 @@ const ndolaPlaces = <NdolaPlace>[
   // ── City Centre ───────────────────────────────────────────────────────────
   NdolaPlace('Ndola CBD',                   -12.9680,    28.6430,    'City Centre'),  // PIN (President Ave)
   NdolaPlace('Ndola Bus Station',           -12.9686005, 28.6495389, 'Transport'),    // OSM
+  NdolaPlace('Ndola Town Centre TC Hub',    -12.9270,    28.6415,    'Transport'),    // PIN (northern transit hub — intercity boarding)
+  NdolaPlace('Ndola Stadium Area (T3)',     -12.9268,    28.6015,    'Transport'),    // PIN (T3 highway approach node near stadium)
   NdolaPlace('Masala Bus Station',          -12.9973932, 28.6429534, 'Transport'),    // OSM
   NdolaPlace('SMK International Airport',   -12.9150,    28.5320,    'Transport'),    // PIN (new airport, 15km west on T3)
 

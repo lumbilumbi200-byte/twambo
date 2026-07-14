@@ -1310,6 +1310,16 @@ class _ActionButtons extends StatelessWidget {
             textColor: Colors.white,
             onTap: () => context.go('/driver/gps/${trip.id}/${trip.driverId}'),
           ),
+          if (trip.isHike) ...[
+            const SizedBox(height: 8),
+            _Btn(
+              label: 'ANNOUNCE DROP-OFF',
+              icon: Icons.person_pin_circle_outlined,
+              color: const Color(0xFFE65100),
+              textColor: Colors.white,
+              onTap: () => _showAnnounceDropoffSheet(context, trip),
+            ),
+          ],
           const SizedBox(height: 8),
           _Btn(
             label: 'COMPLETE TRIP',
@@ -1348,6 +1358,101 @@ class _ActionButtons extends StatelessWidget {
         ],
       ]),
     );
+  }
+}
+
+Future<void> _showAnnounceDropoffSheet(BuildContext context, Trip trip) async {
+  const hikeCities = <(String, String)>[
+    ('kitwe', 'Kitwe'), ('ndola', 'Ndola'), ('chingola', 'Chingola'),
+    ('chililabombwe', 'Chililabombwe'), ('luanshya', 'Luanshya'),
+    ('chambishi', 'Chambishi'), ('solwezi', 'Solwezi'),
+    ('lumwana_kalumbila', 'Lumwana / Kalumbila'),
+  ];
+
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  final bg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
+
+  final selected = await showModalBottomSheet<(String, String)>(
+    context: context,
+    backgroundColor: bg,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+    builder: (ctx) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('DROP-OFF CITY', style: GoogleFonts.spaceGrotesk(
+            fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1,
+            color: const Color(0xFFE65100),
+          )),
+          const SizedBox(height: 4),
+          Text('Which city are you dropping a passenger at?',
+              style: GoogleFonts.manrope(fontSize: 13, color: isDark ? Colors.white70 : Colors.black54)),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8, runSpacing: 8,
+            children: hikeCities.map((c) {
+              final (id, name) = c;
+              return GestureDetector(
+                onTap: () => Navigator.pop(ctx, c),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: const Color(0xFFE65100)),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(name, style: GoogleFonts.spaceGrotesk(
+                    fontSize: 13, fontWeight: FontWeight.w700,
+                    color: const Color(0xFFE65100),
+                  )),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    ),
+  );
+
+  if (selected == null || !context.mounted) return;
+  final (cityId, cityName) = selected;
+
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: bg,
+      title: Text('Announce drop-off?', style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.w800)),
+      content: Text('Riders in $cityName will be notified that a seat opens soon. They can request to join — you choose who boards.',
+          style: GoogleFonts.manrope(fontSize: 13)),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: Text('ANNOUNCE', style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.w800, color: const Color(0xFFE65100))),
+        ),
+      ],
+    ),
+  );
+
+  if (ok != true || !context.mounted) return;
+  try {
+    await ApiClient.dio.post(
+      Endpoints.announceDropoff(trip.id),
+      data: {'city_name': cityName, 'city_id': cityId, 'seats': 1},
+    );
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Announced! Riders in $cityName will see this.'),
+        backgroundColor: const Color(0xFFE65100),
+      ));
+    }
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Announcement failed. Check your connection.'),
+        backgroundColor: Colors.red,
+      ));
+    }
   }
 }
 

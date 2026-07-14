@@ -18,6 +18,7 @@ const luanshyaPlaces = <LuanshyaPlace>[
   // ── City Centre (eastern strip) ───────────────────────────────────────────
   LuanshyaPlace('Luanshya CBD',                -13.1360,    28.4165,    'City Centre'),  // PIN
   LuanshyaPlace('Luanshya Bus Station',         -13.1392,    28.4135,    'Transport'),    // PIN
+  LuanshyaPlace('Luanshya Town Avenue',         -13.1288,    28.4173,    'Transport'),    // PIN (main road intercity boarding strip)
 
   // ── Shopping ──────────────────────────────────────────────────────────────
   LuanshyaPlace('Shoprite Luanshya',            -13.1296961, 28.4184964, 'Shopping'),     // OSM

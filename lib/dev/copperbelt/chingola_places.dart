@@ -86,6 +86,10 @@ const chingolaPlaces = <ChingolaPlace>[
   ChingolaPlace('Nchanga Open Pit Gate',            -12.5110,    27.8180,    'Transport'),    // PIN (shift-change node)
   ChingolaPlace('Mine Shaft Access Road',           -12.5180,    27.8410,    'Transport'),    // PIN (heavy truck route; shift-change warning active)
 
+  // ── Highway / Intercity Boarding Points ──────────────────────────────────
+  ChingolaPlace('Chiwempala Market Loop',           -12.5348,    27.8761,    'Transport'),    // PIN (specific roundabout boarding, not the residential compound)
+  ChingolaPlace('Kasompe Turn-Off',                 -12.5115,    27.8920,    'Junction'),     // PIN (T3 turn-off node — Chingola side before Chililabombwe)
+
   // ── Road / Junctions ─────────────────────────────────────────────────────
   // NOTE: heavy machinery channels run along -12.5020 to -12.5210; monitor for haul-track closures
   ChingolaPlace('T3 Highway Core (Chingola)',       -12.5585,    27.8625,    'Junction'),     // PIN (main dual-carriageway base corridor)

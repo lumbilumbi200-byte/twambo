@@ -34,6 +34,7 @@ const chililabombwePlaces = <ChililabombwePlace>[
   ChililabombwePlace('Konkola Mine Township',    -12.3520,    27.7950,    'Residential'), // PIN (KCM housing estate)
   ChililabombwePlace('Konkola Village',          -12.3002066, 27.7618186, 'Residential'), // OSM
   ChililabombwePlace('KDMP Main Gate',           -12.3390,    27.7810,    'Transport'),   // PIN (Konkola Deep Mine, shift-change node)
+  ChililabombwePlace('Konkola Mine Gates',       -12.3512,    27.8014,    'Transport'),   // PIN (main KCM entry — Chingola corridor pickup)
 
   // ── Road / Hiking Junctions ───────────────────────────────────────────────
   // Southern gate — T3 entry from Chingola into Chililabombwe
