@@ -101,7 +101,14 @@ double haversineKm(double lat1, double lng1, double lat2, double lng2) {
 }
 
 double privateFromRoadKm(double roadKm) => (roadKm * 7).clamp(25.0, 500.0);
-double dynamicFromRoadKm(double roadKm) => (roadKm * 7 / 3).clamp(15.0, 500.0);
+
+// Dynamic fare: each rider pays independently based on their own distance.
+// Driver earns the sum — not a split of a fixed pot.
+// Formula: K10 base + K7/km, rounded up to nearest K5.
+double dynamicFromRoadKm(double roadKm) {
+  final raw = 10.0 + roadKm * 7.0;
+  return ((raw / 5).ceil() * 5).toDouble();
+}
 
 double estimatePrivateFare(double oLat, double oLng, double dLat, double dLng) {
   final km = haversineKm(oLat, oLng, dLat, dLng) * 1.35;

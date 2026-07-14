@@ -125,7 +125,8 @@ class TripSearchScreen extends ConsumerStatefulWidget {
   ConsumerState<TripSearchScreen> createState() => _TripSearchScreenState();
 }
 
-class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
+class _TripSearchScreenState extends ConsumerState<TripSearchScreen>
+    with WidgetsBindingObserver {
   TwamboPlace? _fromPlace;
   TwamboPlace? _toPlace;
   CityRegion? _detectedCity;  // rider's current city (GPS-detected)
@@ -175,6 +176,7 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _detectUserCity();
     // Poll mock booking state so active ride card updates live
     _activeRideTimer = Timer.periodic(const Duration(seconds: 5), (_) {
@@ -207,8 +209,14 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _activeRideTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _detectUserCity();
   }
 
   // Returns the rider's current active confirmed booking + linked trip
@@ -2213,8 +2221,11 @@ class _BoardingData {
 Future<void> _showBoardingSheet(BuildContext context, Trip trip) async {
   final surcharge = ProviderScope.containerOf(context)
       .read(authProvider).user?.fareSurchargePct ?? 0;
-  final cityId = detectCity(trip.originLat, trip.originLng)?.id ?? 'kitwe';
-  final cityPlaces = placesForCity(cityId);
+  // Hike trips use the full intercity place list (all cities + highway waypoints).
+  // City trips scope to the trip's origin city only.
+  final cityPlaces = trip.isHike
+      ? intercityTwamboPlaces()
+      : placesForCity(detectCity(trip.originLat, trip.originLng)?.id ?? 'kitwe');
   final data = await showModalBottomSheet<_BoardingData>(
     context: context,
     isScrollControlled: true,
@@ -2370,11 +2381,29 @@ class _BoardingSheetState extends State<_BoardingSheet> {
     return (detourKm * rate).clamp(0, cap);
   }
 
-  double get _segmentFare => estimateDynamicFare(
-    widget.trip.originLat, widget.trip.originLng,
-    _dropoff?.lat ?? widget.trip.destinationLat,
-    _dropoff?.lng ?? widget.trip.destinationLng,
-  );
+  double get _segmentFare {
+    final trip = widget.trip;
+    if (trip.isHike) {
+      // Proportional fare: rider pays route_fare × (remaining km / full route km).
+      // Pickup at origin → full fare. Pickup at intermediate city → reduced fare.
+      final p = _pickup;
+      if (p == null) return trip.currentSharedFare;
+      final fullDist = haversineKm(
+          trip.originLat, trip.originLng, trip.destinationLat, trip.destinationLng);
+      if (fullDist < 1) return trip.currentSharedFare;
+      final remainDist =
+          haversineKm(p.lat, p.lng, trip.destinationLat, trip.destinationLng);
+      final ratio = (remainDist / fullDist).clamp(0.0, 1.0);
+      final raw = trip.currentSharedFare * ratio;
+      return ((raw / 5).ceil() * 5).toDouble();
+    }
+    // Dynamic city trip: per-rider distance-based fare.
+    return estimateDynamicFare(
+      trip.originLat, trip.originLng,
+      _dropoff?.lat ?? trip.destinationLat,
+      _dropoff?.lng ?? trip.destinationLng,
+    );
+  }
 
   @override
   void initState() {
@@ -2391,7 +2420,9 @@ class _BoardingSheetState extends State<_BoardingSheet> {
       builder: (_) => _PlacePickerSheet(
         title: 'WHERE DO YOU WANT TO BOARD?',
         places: widget.cityPlaces,
-        cityName: detectCity(widget.trip.originLat, widget.trip.originLng)?.name ?? 'Kitwe',
+        cityName: widget.trip.isHike
+            ? 'ALL CITIES'
+            : detectCity(widget.trip.originLat, widget.trip.originLng)?.name ?? 'Kitwe',
       ),
     );
     if (result != null && mounted) setState(() => _pickup = result);
@@ -2602,14 +2633,40 @@ class _BoardingSheetState extends State<_BoardingSheet> {
                   ),
                 ]),
 
-                // Drop-off — optional for all rides
-                const SizedBox(height: 12),
-                Text('WHERE ARE YOU GOING?',
+                // ── Hike trip: fare shown based on pickup, no dropoff picker ──
+                if (trip.isHike) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF0F2012) : const Color(0xFFE8F5E9),
+                      border: const Border(left: BorderSide(color: TwamboColors.success, width: 3)),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.payments_outlined, size: 14, color: TwamboColors.success),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(
+                        _pickup != null && _pickup!.name != trip.originName
+                            ? 'YOUR FARE (boarding at ${_pickup!.name.split(' ').first})'
+                            : 'YOUR FARE (full route)',
+                        style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w700,
+                            color: TwamboColors.success, letterSpacing: 0.8),
+                      )),
+                      Text('K${_segmentFare.toStringAsFixed(0)}',
+                          style: GoogleFonts.spaceGrotesk(fontSize: 20, fontWeight: FontWeight.w800,
+                              color: TwamboColors.success)),
+                    ]),
+                  ),
+                ],
+
+                // ── City trip: dropoff picker + segment fare ───────────────
+                if (!trip.isHike) ...[
+                  const SizedBox(height: 12),
+                  Text('WHERE ARE YOU GOING?',
                       style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w800,
                           color: TwamboColors.textSecondary, letterSpacing: 1.5)),
                   const SizedBox(height: 8),
                   Row(children: [
-                    // Search list tap
                     Expanded(
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
@@ -2642,7 +2699,6 @@ class _BoardingSheetState extends State<_BoardingSheet> {
                         ),
                       ),
                     ),
-                    // Map pin button
                     GestureDetector(
                       onTap: _pickDropoffOnMap,
                       child: Container(
@@ -2673,6 +2729,7 @@ class _BoardingSheetState extends State<_BoardingSheet> {
                       ]),
                     ),
                   ],
+                ],
 
                   // Detour fee info — shown when pickup differs from trip origin
                   if (_detourFee > 0) ...[

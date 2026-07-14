@@ -375,7 +375,35 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
               // Route map preview
               if (_origin != null && _destination != null) ...[
                 _TripRouteMap(origin: _origin!, destination: _destination!, isDark: isDark),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
+                // Suggested fare hint for hike trips
+                if (_tripType == 'hike') Builder(builder: (_) {
+                  final suggested = suggestedHikeFare(
+                    _origin!.cityId.isEmpty ? detectCity(_origin!.lat, _origin!.lng)?.id ?? 'kitwe' : _origin!.cityId,
+                    _destination!.cityId.isEmpty ? detectCity(_destination!.lat, _destination!.lng)?.id ?? 'kitwe' : _destination!.cityId,
+                  );
+                  if (suggested == null) return const SizedBox.shrink();
+                  return Container(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF1A1200) : const Color(0xFFFFF8E1),
+                      border: const Border(left: BorderSide(color: Color(0xFFE65100), width: 3)),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.lightbulb_outline, size: 14, color: Color(0xFFE65100)),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(
+                        'Suggested route fare for this route',
+                        style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.w700,
+                            color: const Color(0xFFE65100), letterSpacing: 0.8),
+                      )),
+                      Text('K${suggested.toStringAsFixed(0)}',
+                          style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w800,
+                              color: const Color(0xFFE65100))),
+                    ]),
+                  );
+                }),
+                const SizedBox(height: 4),
               ],
 
               // ── Departure time card ────────────────────────────────────────
