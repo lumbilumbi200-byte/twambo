@@ -23,25 +23,32 @@ class _PickupStop {
   final String pickupName;
   final LatLng pickupPos;
   final String dropoffName;
+  final LatLng? dropoffPos;
   final bool isPickedUp;
 
   const _PickupStop({
     required this.bookingId, required this.riderName,
     required this.pickupName, required this.pickupPos,
-    required this.dropoffName, required this.isPickedUp,
+    required this.dropoffName, this.dropoffPos,
+    required this.isPickedUp,
   });
 
-  factory _PickupStop.fromJson(Map<String, dynamic> j) => _PickupStop(
-    bookingId: j['id'],
-    riderName: j['rider_name'] ?? '',
-    pickupName: j['pickup_name'] ?? '',
-    pickupPos: LatLng(
-      double.parse(j['pickup_lat'].toString()),
-      double.parse(j['pickup_lng'].toString()),
-    ),
-    dropoffName: j['dropoff_name'] ?? '',
-    isPickedUp: j['is_picked_up'] as bool? ?? false,
-  );
+  factory _PickupStop.fromJson(Map<String, dynamic> j) {
+    final dLat = double.tryParse(j['dropoff_lat']?.toString() ?? '');
+    final dLng = double.tryParse(j['dropoff_lng']?.toString() ?? '');
+    return _PickupStop(
+      bookingId: j['id'],
+      riderName: j['rider_name'] ?? '',
+      pickupName: j['pickup_name'] ?? '',
+      pickupPos: LatLng(
+        double.parse(j['pickup_lat'].toString()),
+        double.parse(j['pickup_lng'].toString()),
+      ),
+      dropoffName: j['dropoff_name'] ?? '',
+      dropoffPos: (dLat != null && dLng != null) ? LatLng(dLat, dLng) : null,
+      isPickedUp: j['is_picked_up'] as bool? ?? false,
+    );
+  }
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -307,6 +314,27 @@ class _DriverGpsScreenState extends State<DriverGpsScreen> {
                 ),
               )),
 
+              // Drop-off markers (orange flags) — skip if same as destination (<200 m)
+              ..._pickups.expand((p) {
+                final pos = p.dropoffPos;
+                if (pos == null) return <Marker>[];
+                if (_trip != null) {
+                  final dest = LatLng(_trip!.destinationLat, _trip!.destinationLng);
+                  final d = const Distance().as(LengthUnit.Meter, pos, dest);
+                  if (d < 200) return <Marker>[];
+                }
+                return [Marker(
+                  point: pos, width: 28, height: 28,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFFE65100).withValues(alpha: 0.85),
+                    ),
+                    child: const Icon(Icons.flag, color: Colors.white, size: 14),
+                  ),
+                )];
+              }),
+
               // Driver car marker
               if (_currentPos != null)
                 Marker(
@@ -504,9 +532,18 @@ class _StopRow extends StatelessWidget {
               color: done
                   ? TwamboColors.textSecondary
                   : (isDark ? Colors.white : TwamboColors.textPrimary))),
-          Text(stop.pickupName,
-            style: GoogleFonts.manrope(fontSize: 10, color: TwamboColors.textSecondary),
-            maxLines: 1, overflow: TextOverflow.ellipsis),
+          Row(children: [
+            Expanded(child: Text(stop.pickupName,
+              style: GoogleFonts.manrope(fontSize: 10, color: TwamboColors.textSecondary),
+              maxLines: 1, overflow: TextOverflow.ellipsis)),
+            if (stop.dropoffName.isNotEmpty) ...[
+              const Icon(Icons.arrow_forward, size: 9, color: Color(0xFFE65100)),
+              const SizedBox(width: 2),
+              Flexible(child: Text(stop.dropoffName,
+                style: GoogleFonts.manrope(fontSize: 10, color: const Color(0xFFE65100)),
+                maxLines: 1, overflow: TextOverflow.ellipsis)),
+            ],
+          ]),
         ])),
         if (done)
           Container(
