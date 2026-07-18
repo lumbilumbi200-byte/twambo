@@ -86,9 +86,15 @@ class AuthNotifier extends Notifier<AuthState> {
       if (data is Map) {
         return (data['detail'] ?? data['non_field_errors']?.first ?? data.values.first?.first ?? 'Invalid credentials').toString();
       }
-      return 'DIO ${e.type.name}: ${e.error ?? e.message}';
-    } catch (e) {
-      return 'ERROR: $e';
+      if (e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.sendTimeout) {
+        return 'No internet connection. Please check your network and try again.';
+      }
+      return 'Something went wrong. Please try again.';
+    } catch (_) {
+      return 'Something went wrong. Please try again.';
     }
   }
 
@@ -120,9 +126,15 @@ class AuthNotifier extends Notifier<AuthState> {
       if (data is Map) {
         return (data['detail'] ?? data.values.first?.first ?? 'Registration failed').toString();
       }
-      return 'DIO ${e.type.name}: ${e.error ?? e.message}';
-    } catch (e) {
-      return 'ERROR: $e';
+      if (e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.sendTimeout) {
+        return 'No internet connection. Please check your network and try again.';
+      }
+      return 'Something went wrong. Please try again.';
+    } catch (_) {
+      return 'Something went wrong. Please try again.';
     }
   }
 

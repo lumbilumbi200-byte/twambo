@@ -512,8 +512,18 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen>
               info: activeRide,
               isDark: isDark,
               onCancel: () {
-                cancelMockBooking(activeRide.booking.id);
-                ref.invalidate(tripSearchProvider(_searchKey));
+                final id = activeRide.booking.id;
+                Future<void> doCancel() async {
+                  if (kUseMockData) {
+                    cancelMockBooking(id);
+                  } else {
+                    try {
+                      await ApiClient.dio.post(Endpoints.cancelBooking(id));
+                    } catch (_) {}
+                  }
+                  ref.invalidate(tripSearchProvider(_searchKey));
+                }
+                doCancel();
               },
               onManage: () {
                 final trip = activeRide.trip;
