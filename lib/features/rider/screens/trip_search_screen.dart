@@ -367,9 +367,18 @@ class _TripSearchScreenState extends ConsumerState<TripSearchScreen>
         }
         return;
       }
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-      );
+      // Use last known position first (instant); fall back to a fresh fix at
+      // medium accuracy (cell/WiFi, ~2s) only when we have nothing cached.
+      final cached = await Geolocator.getLastKnownPosition();
+      final pos = (cached != null &&
+              DateTime.now().difference(cached.timestamp).inMinutes <= 5)
+          ? cached
+          : await Geolocator.getCurrentPosition(
+              locationSettings:
+                  const LocationSettings(accuracy: LocationAccuracy.medium),
+            ).timeout(const Duration(seconds: 15),
+              onTimeout: () =>
+                  throw Exception('Location timed out — try again'));
       // Reverse geocode via Nominatim for an accurate name
       String name;
       try {
@@ -1632,9 +1641,10 @@ class _TripGridCardState extends State<_TripGridCard> with SingleTickerProviderS
                     ),
                 ]),
           const SizedBox(height: 4),
-          Text('K${trip.currentSharedFare.toStringAsFixed(0)}',
-              style: GoogleFonts.spaceGrotesk(fontSize: 26, fontWeight: FontWeight.w800,
-                  color: textColor, height: 1.0)),
+          Text(
+            'K${(trip.isDynamic && !trip.isHike ? estimateDynamicFare(trip.originLat, trip.originLng, trip.destinationLat, trip.destinationLng) : trip.currentSharedFare).toStringAsFixed(0)}',
+            style: GoogleFonts.spaceGrotesk(fontSize: 26, fontWeight: FontWeight.w800,
+                color: textColor, height: 1.0)),
 
           // Animated route column
           Expanded(
@@ -1786,9 +1796,10 @@ class _TripListCard extends StatelessWidget {
           const SizedBox(width: 12),
           // Price + book
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text('K${trip.currentSharedFare.toStringAsFixed(0)}',
-                style: GoogleFonts.spaceGrotesk(fontSize: 22, fontWeight: FontWeight.w800,
-                    color: textColor)),
+            Text(
+              'K${(trip.isDynamic && !trip.isHike ? estimateDynamicFare(trip.originLat, trip.originLng, trip.destinationLat, trip.destinationLng) : trip.currentSharedFare).toStringAsFixed(0)}',
+              style: GoogleFonts.spaceGrotesk(fontSize: 22, fontWeight: FontWeight.w800,
+                  color: textColor)),
             const SizedBox(height: 4),
             if (bookingClosed)
               Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

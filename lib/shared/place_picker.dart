@@ -1,8 +1,10 @@
+import 'dart:async';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
-import '../dev/all_places.dart';
 import '../dev/twambo_place.dart';
 import '../dev/mock_trips.dart' show kShowMapTiles;
 import 'theme.dart';
@@ -140,15 +142,25 @@ class _PlaceSearchSheet extends StatefulWidget {
 class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
   final _ctrl = TextEditingController();
   late List<TwamboPlace> _results;
+  List<TwamboPlace> _nominatimResults = [];
+  bool _nominatimLoading = false;
+  Timer? _debounce;
+
+  static final _nominatim = Dio(BaseOptions(
+    baseUrl: 'https://nominatim.openstreetmap.org',
+    headers: {'User-Agent': 'TwamboApp/1.0 (twambo.zm)'},
+    connectTimeout: const Duration(seconds: 8),
+    receiveTimeout: const Duration(seconds: 8),
+  ));
 
   @override
   void initState() {
     super.initState();
     _results = widget.places;
-    _ctrl.addListener(_filter);
+    _ctrl.addListener(_onQuery);
   }
 
-  void _filter() {
+  void _onQuery() {
     final q = _ctrl.text.toLowerCase();
     setState(() {
       _results = q.isEmpty
@@ -158,10 +170,56 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
               (p.tag?.toLowerCase().contains(q) ?? false) ||
               p.cityName.toLowerCase().contains(q)).toList();
     });
+
+    _debounce?.cancel();
+    final raw = _ctrl.text.trim();
+    if (raw.length < 3) {
+      setState(() { _nominatimResults = []; _nominatimLoading = false; });
+      return;
+    }
+    setState(() { _nominatimResults = []; _nominatimLoading = true; });
+    _debounce = Timer(const Duration(milliseconds: 600), () => _searchNominatim(raw));
+  }
+
+  Future<void> _searchNominatim(String q) async {
+    try {
+      final resp = await _nominatim.get<List<dynamic>>('/search', queryParameters: {
+        'q': q,
+        'format': 'json',
+        'countrycodes': 'zm',
+        'limit': 5,
+        'addressdetails': 1,
+      });
+      final items = resp.data ?? [];
+      final results = <TwamboPlace>[];
+      for (final item in items) {
+        final lat = double.tryParse(item['lat']?.toString() ?? '');
+        final lng = double.tryParse(item['lon']?.toString() ?? '');
+        if (lat == null || lng == null) continue;
+        final display = (item['display_name'] as String? ?? '');
+        final name = display.split(',').first.trim();
+        results.add(TwamboPlace(name, lat, lng,
+            cityId: _nearestCityId(lat, lng), tag: 'Map Search'));
+      }
+      if (mounted) setState(() { _nominatimResults = results; _nominatimLoading = false; });
+    } catch (_) {
+      if (mounted) setState(() { _nominatimResults = []; _nominatimLoading = false; });
+    }
+  }
+
+  String _nearestCityId(double lat, double lng) {
+    TwamboPlace? nearest;
+    double minDist = double.infinity;
+    for (final p in widget.places) {
+      final d = (lat - p.lat) * (lat - p.lat) + (lng - p.lng) * (lng - p.lng);
+      if (d < minDist) { minDist = d; nearest = p; }
+    }
+    return nearest?.cityId ?? '';
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _ctrl.dispose();
     super.dispose();
   }
@@ -172,6 +230,14 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
     final bg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
     final textColor = isDark ? Colors.white : TwamboColors.textPrimary;
     final screenH = MediaQuery.of(context).size.height;
+
+    final showNominatim = _nominatimLoading || _nominatimResults.isNotEmpty;
+    int itemCount = _results.length;
+    if (showNominatim) {
+      itemCount += 1; // section header
+      if (_nominatimLoading) itemCount += 1;
+      itemCount += _nominatimResults.length;
+    }
 
     return Container(
       height: screenH * 0.85,
@@ -237,48 +303,89 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
         const SizedBox(height: 4),
 
         Expanded(child: ListView.builder(
-          itemCount: _results.length,
+          itemCount: itemCount,
           itemBuilder: (_, i) {
-            final p = _results[i];
-            final isSelected = widget.initial?.name == p.name && widget.initial?.cityId == p.cityId;
-            return GestureDetector(
-              onTap: () => Navigator.pop(context, p),
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? TwamboColors.primary.withValues(alpha: 0.1)
-                      : (isDark ? const Color(0xFF1E1E1E) : TwamboColors.surfaceAlt),
-                  border: Border(left: BorderSide(
-                    color: isSelected ? TwamboColors.primary : Colors.transparent,
-                    width: 3,
-                  )),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            if (i < _results.length) {
+              return _buildPlaceRow(context, _results[i], isDark, textColor);
+            }
+
+            final offset = i - _results.length;
+
+            // Section header
+            if (offset == 0) {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
                 child: Row(children: [
-                  Icon(_tagIcon(p.tag), size: 16,
-                      color: isSelected ? TwamboColors.primary : TwamboColors.textSecondary),
-                  const SizedBox(width: 10),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(p.name, style: GoogleFonts.manrope(
-                        fontSize: 13, fontWeight: FontWeight.w600,
-                        color: isSelected ? TwamboColors.primary : textColor)),
-                    if (p.tag != null || p.cityName.isNotEmpty)
-                      Text(
-                        [if (p.cityName.isNotEmpty) p.cityName,
-                         if (p.tag != null) p.tag!].join(' · '),
-                        style: GoogleFonts.manrope(
-                            fontSize: 10, color: TwamboColors.textSecondary),
-                      ),
-                  ])),
-                  if (isSelected)
-                    const Icon(Icons.check_circle, size: 16, color: TwamboColors.primary),
+                  const Icon(Icons.public, size: 12, color: TwamboColors.textSecondary),
+                  const SizedBox(width: 6),
+                  Text('FROM MAP SEARCH', style: GoogleFonts.spaceGrotesk(
+                      fontSize: 8, fontWeight: FontWeight.w700,
+                      color: TwamboColors.textSecondary, letterSpacing: 1.5)),
                 ]),
-              ),
-            );
+              );
+            }
+
+            // Loading spinner
+            if (_nominatimLoading && offset == 1) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(child: SizedBox(width: 18, height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: TwamboColors.primary))),
+              );
+            }
+
+            // Nominatim results
+            final ni = offset - 1 - (_nominatimLoading ? 1 : 0);
+            if (ni >= 0 && ni < _nominatimResults.length) {
+              return _buildPlaceRow(context, _nominatimResults[ni], isDark, textColor,
+                  fromNominatim: true);
+            }
+
+            return const SizedBox.shrink();
           },
         )),
       ]),
+    );
+  }
+
+  Widget _buildPlaceRow(BuildContext context, TwamboPlace p, bool isDark, Color textColor,
+      {bool fromNominatim = false}) {
+    final isSelected = widget.initial?.name == p.name && widget.initial?.cityId == p.cityId;
+    return GestureDetector(
+      onTap: () => Navigator.pop(context, p),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? TwamboColors.primary.withValues(alpha: 0.1)
+              : (isDark ? const Color(0xFF1E1E1E) : TwamboColors.surfaceAlt),
+          border: Border(left: BorderSide(
+            color: isSelected ? TwamboColors.primary : Colors.transparent,
+            width: 3,
+          )),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: Row(children: [
+          Icon(fromNominatim ? Icons.public : _tagIcon(p.tag), size: 16,
+              color: isSelected ? TwamboColors.primary : TwamboColors.textSecondary),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(p.name, style: GoogleFonts.manrope(
+                fontSize: 13, fontWeight: FontWeight.w600,
+                color: isSelected ? TwamboColors.primary : textColor)),
+            if (p.tag != null || p.cityName.isNotEmpty)
+              Text(
+                [if (p.cityName.isNotEmpty) p.cityName,
+                 if (p.tag != null) p.tag!].join(' · '),
+                style: GoogleFonts.manrope(
+                    fontSize: 10, color: TwamboColors.textSecondary),
+              ),
+          ])),
+          if (isSelected)
+            const Icon(Icons.check_circle, size: 16, color: TwamboColors.primary),
+        ]),
+      ),
     );
   }
 
