@@ -2,12 +2,62 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'app.dart';
 import 'core/api/api_client.dart';
 import 'core/api/endpoints.dart';
 import 'core/services/version_check_service.dart';
 import 'features/auth/auth_provider.dart';
 import 'shared/widgets/update_gate.dart';
+
+// ── Local notifications setup ─────────────────────────────────────────────────
+
+const _androidChannel = AndroidNotificationChannel(
+  'twambo_high',
+  'Twambo Alerts',
+  description: 'Ride updates, bookings and driver alerts',
+  importance: Importance.high,
+  playSound: true,
+  enableVibration: true,
+);
+
+final _localNotifications = FlutterLocalNotificationsPlugin();
+
+Future<void> _initLocalNotifications() async {
+  const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+  await _localNotifications.initialize(const InitializationSettings(android: android));
+  await _localNotifications
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(_androidChannel);
+}
+
+void _showLocalNotification(RemoteMessage message) {
+  final notification = message.notification;
+  if (notification == null) return;
+  _localNotifications.show(
+    notification.hashCode,
+    notification.title,
+    notification.body,
+    NotificationDetails(
+      android: AndroidNotificationDetails(
+        _androidChannel.id,
+        _androidChannel.name,
+        channelDescription: _androidChannel.description,
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+      ),
+    ),
+  );
+}
+
+// Background handler — must be top-level
+@pragma('vm:entry-point')
+Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+}
+
+// ── FCM token registration ────────────────────────────────────────────────────
 
 Future<void> registerFcmToken() async {
   try {
@@ -25,9 +75,27 @@ Future<void> registerFcmToken() async {
   } catch (_) {}
 }
 
+// ── Entry point ───────────────────────────────────────────────────────────────
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+  await _initLocalNotifications();
+
+  // Show notification when app is in the foreground
+  FirebaseMessaging.onMessage.listen(_showLocalNotification);
+
+  // Register background handler
+  FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
+
+  // Prevent FCM from auto-displaying heads-up notifications on Android
+  // (we show them ourselves via flutter_local_notifications so we control the channel)
+  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+    alert: false,
+    badge: false,
+    sound: false,
+  );
+
   runApp(const ProviderScope(child: AppBootstrap()));
 }
 
@@ -68,7 +136,6 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
         home: Scaffold(body: Center(child: CircularProgressIndicator())),
       );
     }
-    // Hard block: app is too old to run
     if (_versionResult?.isForceUpdate == true) {
       return ForceUpdateScreen(result: _versionResult!);
     }
